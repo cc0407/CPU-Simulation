@@ -20,6 +20,7 @@ typedef struct {
     int arrTime; // Arrival Time
     int finTime; // Finish Time
     int turnTime; // Turnaround Time
+    int serTime; // Service Time
     int PNo; // Process Number
     int TNo; // Thread Number
     int burstNo; // Number of bursts
@@ -44,17 +45,21 @@ typedef struct {
 
 
 heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, int* processSwitch) ;
+thread** createThreadList( int pNum, int tAmt );
+cpuBurst** createBurstList(int burstAmt, int tNum);
 
-/* Process Functions */
-int getIntSwitchTime(int pNum); // Returns the amt of time needed to switch to another thread in the same process (pNum)
-int getExtSwitchTime(int pNum); // Returns the amt of time needed to switch to another thread in a different process (pNum)
+/* Process/Thread Helper Functions */
+int getTotalIOTime(thread* t);
+float getAverageTurnaroundTime(process** processes, int processAmt);
+thread* createEmptyThread();
+void printProcesses(process** processes, int processAmt);
+void printThreads(thread** threads, int threadAmt);
 void freeProcesses(process*** processes, int processAmt); // Frees a list of processes
 void freeThreads( thread** threads, int threadAmt);
 void freeBursts(cpuBurst** bursts, int burstAmt);
-float getAverageTurnaroundTime(process** processes, int processAmt);
 
 /* Heap Functions */
-void initializeHeap(heap* h);
+heap* initializeHeap();
 void insertItem(heap* h, int key, void* data);
 void* removeMin(heap* h); // Removes and returns top node
 

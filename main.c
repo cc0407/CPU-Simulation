@@ -15,6 +15,11 @@ int main(int argc, char* argv[]) {
     processes = (process***)malloc(1 * sizeof(process**));
     *processes = NULL;
     h = initializePriorityQueue(processes, &processAmt, &threadSwitch, &processSwitch);
+    if(!h) { // heap was not initialized correctly, exiting program
+        fprintf(stderr, "Min-heap not initialized correctly. Exiting...\n");
+        freeProcesses(processes, processAmt);
+        return 1;
+    }   
 
     // Input flag parsing
     for(int i = 1; i < argc; i++) {
@@ -65,6 +70,7 @@ int main(int argc, char* argv[]) {
     else
         printf("CPU Utilization is 0%%\n");
 
+    printProcesses(*processes, processAmt);
     freeProcesses(processes, processAmt);
     return 0;
 }
@@ -72,41 +78,160 @@ int main(int argc, char* argv[]) {
 // TODO Read all Processes / Threads / CPU Bursts into their own arrays
 // TODO Turn those arrays into a heap measuring arrival time
 heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, int* processSwitch) {
-    
-    return NULL; //TODO TEMP
-}
-
-// Frees a list of processes
-void freeProcesses(process*** processes, int processAmt) {
-    if(*processes != NULL) {
-        for( int i = 0; i < processAmt; i++) {
-            freeThreads((*processes)[i]->threads, (*processes)[i]->threadAmt);
-            free( (*processes)[i] );
-        }
-        free(*processes);
+    if( scanf(" %d %d %d ", processAmt, threadSwitch) != 3) {
+        fprintf(stderr, "Error ingesting line 0 of input file.\n");
+        return NULL;
     }
-    free(processes);
+    //TODO DEBUGGING
+    //printf("processAmt: %d\nInternal Time: %d\nExternal Time: %d\n", *processAmt, *threadSwitch, *processSwitch);
+    heap* h = initializeHeap();
+
+    *p = (process**)calloc(*processAmt, sizeof(process*)); // Create process array
+    int pNum;
+    int tAmt;
+    for(int i = 0; i < *processAmt; i++) {
+        process* newP = (process*)calloc(1, sizeof(process));
+        if( scanf(" %d %d ", &pNum, &tAmt) != 2 ) {
+            fprintf(stderr, "Error ingesting process %d.\n", i+1);
+            return NULL;
+        }
+        newP->threadAmt = tAmt;
+        newP->threads = createThreadList( pNum, tAmt);
+
+        (*p)[i] = newP; // Create Process inside of process array
+    }
+
+    printProcesses(*p, pNum);
+    return h;
 }
 
-// Frees a list of threads
-void freeThreads( thread** threads, int threadAmt) {
+// Creates a list of threads using data from stdin
+thread** createThreadList( int pNum, int tAmt ) {
+    thread** tList = (thread**)malloc(tAmt * sizeof(thread*));
+    if(!tList) { return NULL; } // NULL Checks for failed malloc
+
+    thread* newThread;
+    int tNo;
+    int arrTime;
+    int bNo;
+    for(int i = 0; i < tAmt; i++) {
+        newThread = createEmptyThread();
+        
+        if(!newThread || scanf(" %d %d %d ", &tNo, &arrTime, &bNo) != 3 ) { // NULL Checks thread and attempts to ingest more info from stdin
+        //if(!newThread || scanf(" %d %d %d ", newThread->TNo, newThread->arrTime, &bNo) != 3 ) {
+            fprintf(stderr, "Error ingesting thread %d of process %d.\n", i+1, pNum);
+            return NULL;
+        }
+
+        newThread->TNo = tNo;
+        newThread->arrTime = arrTime;
+        newThread->burstNo = bNo;
+        newThread->PNo = pNum;
+        newThread->bursts = createBurstList(newThread->burstNo, i+1);
+
+        tList[i] = newThread;
+        
+    }
+
+    return tList;
+}
+
+// Creates a list of bursts using data from stdin
+cpuBurst** createBurstList(int bAmt, int tNum) {
+    cpuBurst** bList = (cpuBurst**)calloc(bAmt, sizeof(cpuBurst*));
+    if(!bList) { return NULL; } // NULL Checks for failed malloc
+
+
+
+    cpuBurst* newBurst;
+    int burstNo;
+    int cpuTime;
+    int ioTime;
+    for(int i = 0; i < bAmt - 1; i++) {
+        newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst));
+        if(!newBurst || scanf(" %d %d %d", &burstNo, &cpuTime, &ioTime) != 3 ) { // NULL Checks burst and attempts to ingest more info from stdin
+            fprintf(stderr, "Error ingesting burst %d of thread %d.\n", i+1, tNum);
+            return NULL;
+        }        
+        newBurst->burstNo = burstNo;
+        newBurst->cpuTime = cpuTime;
+        newBurst->ioTime = ioTime;
+
+        bList[i] = newBurst;
+    }
+
+    // Final burst, no IO
+    newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst));
+    if(!newBurst || scanf(" %d %d ", &burstNo, &cpuTime) != 2 ) { // NULL Checks burst and attempts to ingest more info from stdin
+            fprintf(stderr, "Error ingesting burst %d of thread %d.\n", bAmt, tNum);
+            return NULL;
+        }        
+        newBurst->burstNo = burstNo;
+        newBurst->cpuTime = cpuTime;
+        newBurst->ioTime = 0;
+
+        bList[bAmt - 1] = newBurst;
+
+    return bList;
+}
+
+// Initializes an empty thread and returns it
+thread* createEmptyThread() {
+    thread* newThread;
+    newThread = (thread*)malloc(sizeof(thread));
+    if(!newThread) { return NULL; } // NULL Check for failed malloc
+    newThread->PNo = -1;
+    newThread->TNo = -1;
+    newThread->arrTime = -1; // Arrival Time
+    newThread->finTime = -1; // Finish Time
+    newThread->turnTime = -1; // Turnaround Time
+    newThread->serTime = -1; // Service Time
+    newThread->bursts = NULL;
+    newThread->s = NEW;
+
+    return newThread;
+}
+
+void printProcesses(process** processes, int processAmt) {
+    if (processes != NULL) {
+        for(int i = 0; i < processAmt; i++) {
+            if(processes[i] != NULL)
+                printThreads(processes[i]->threads, processes[i]->threadAmt);
+        }
+    }   
+    else {
+        printf("No Processes Provided.\n");
+    }
+}
+
+void printThreads(thread** threads, int threadAmt) {
+    thread* currThread;
     if(threads != NULL) {
-        for( int i = 0; i < threadAmt; i++) {
-            freeBursts(threads[i]->bursts, threads[i]->burstNo);
-            free( threads[i]);
+        for(int i = 0; i < threadAmt; i++) {
+            if(threads[i] != NULL) {
+                currThread = threads[i];
+                printf("Thread %d of Process %d:\n", currThread->TNo, currThread->PNo);
+                printf("\tarrival time: %d\n", currThread->arrTime);
+                printf("\tservice time: %d units, I/O time: %d units, turnaround time: %d units, finish time: %d units\n", 
+                    currThread->serTime, getTotalIOTime(currThread), currThread->turnTime, currThread->finTime);
+            }
         }
-        free(threads);
+    }  
+    else {
+        return;
     }
 }
 
-// Frees a list of bursts
-void freeBursts(cpuBurst** bursts, int burstAmt) {
-    if(bursts != NULL) {
-        for( int i = 0; i < burstAmt; i++) {
-            free( bursts[i]);
+int getTotalIOTime(thread* t) {
+    int sum = 0;
+    if ( t != NULL ) {
+        for(int i = 0; i < t->burstNo; i++) {
+            sum+= t->bursts[i]->ioTime;
         }
-        free(bursts);
+        return sum;
     }
+    else
+        return sum;
 }
 
 float getAverageTurnaroundTime(process** processes, int processAmt) {
@@ -130,4 +255,49 @@ bool isEmpty(heap* h) {
         return true;
     }
     return h->curr_size == 0;
+}
+
+// Frees a list of processes
+void freeProcesses(process*** processes, int processAmt) {
+    if(*processes != NULL) {
+        for( int i = 0; i < processAmt; i++) {
+            if((*processes)[i] != NULL) {
+                freeThreads((*processes)[i]->threads, (*processes)[i]->threadAmt);
+                free( (*processes)[i] );
+            }
+        }
+        free(*processes);
+    }
+    free(processes);
+}
+
+
+// Frees a list of threads
+void freeThreads( thread** threads, int threadAmt) {
+    if(threads != NULL) {
+        for( int i = 0; i < threadAmt; i++) {
+            if(threads[i] != NULL) {
+                freeBursts(threads[i]->bursts, threads[i]->burstNo);
+                free( threads[i]);
+            }
+        }
+        free(threads);
+    }
+}
+
+// Frees a list of bursts
+void freeBursts(cpuBurst** bursts, int burstAmt) {
+    if(bursts != NULL) {
+        for( int i = 0; i < burstAmt; i++) {
+            if(bursts[i] != NULL) {
+                free( bursts[i]);
+            }
+        }
+        free(bursts);
+    }
+}
+
+//TODO TEMP
+heap* initializeHeap() {
+    return NULL;
 }
