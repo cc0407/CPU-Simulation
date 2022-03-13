@@ -1,6 +1,6 @@
 #include "main.h"
-int detailed = false;
-int verbose = 0;
+bool detailed = false;
+bool verbose = false;
 int RRTime = 0;
 
 int main(int argc, char* argv[]) {
@@ -8,8 +8,8 @@ int main(int argc, char* argv[]) {
     int processAmt;
     int threadSwitch;
     int processSwitch;
-    float timeElapsed = 0;
-    float CPUUtilizationTime = 0;
+    int timeElapsed = 0;
+    int CPUUtilizationTime = 0;
     heap* h;
 
     processes = (process***)calloc(1, sizeof(process**));
@@ -48,14 +48,34 @@ int main(int argc, char* argv[]) {
 
     //TODO DEBUGGING
     //printf("Detailed: %d\nVerbose: %d\nRound Robin: %d\n", detailed, verbose, RRTime);
+    //printHeap(h);
 
+    node* currNode;
+    thread* currThread;
     while( !isEmpty(h) ) {
+        if(timeElapsed >= minKey(h)) { // Next thread has arrived
+            currNode = removeMin(h);
+            currThread = (thread*)currNode;
+        }
+        switch (currThread->s) {
+            case READY:
+                currThread->s = RUNNING;
+                currThread->serTime = timeElapsed;
+                if(verbose)
+                    printf("At time %d: Thread %d of Process %d moves from ready to running.\n", timeElapsed, currThread->TNo, currThread->PNo);
+                break;
+            case RUNNING:
+                break;
+            default:
+                break;
+        }
+
         //TODO EXTRACT EVENT FROM QUEUE
         //TODO UPDATE TIME TO MATCH EVENT
         //TODO Switch statement for type of event
             //TODO PROCESS EVENT, POSSIBLY ADD MORE EVENTS TO THE QUEUE
-            //TODO COLLECT STATS
-            
+            //TODO COLLECT STATS      
+        timeElapsed++;
     }
 
     if(RRTime == 0)
@@ -63,15 +83,19 @@ int main(int argc, char* argv[]) {
     else
         printf("Round Robin Scheduling (quantum = %d time units)\n", RRTime);
 
-    printf("Total Time required is %.0f units\n", timeElapsed);
+    printf("Total Time required is %d units\n", timeElapsed);
     printf("Average Turnaround Time is %.1f time units\n", getAverageTurnaroundTime(*processes, processAmt));
     if(timeElapsed != 0)
         printf("CPU Utilization is %d%%\n", CPUUtilizationTime / timeElapsed * 100);
     else
         printf("CPU Utilization is 0%%\n");
 
-    printProcesses(*processes, processAmt);
+    if( detailed ) {
+        printProcesses(*processes, processAmt);
+        //printHeap(h); //TODO DEBUGGING
+    }
     freeProcesses(processes, processAmt);
+    freeHeap(h);
     return 0;
 }
 
@@ -84,8 +108,8 @@ heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, 
     }
     //TODO DEBUGGING
     //printf("processAmt: %d\nInternal Time: %d\nExternal Time: %d\n", *processAmt, *threadSwitch, *processSwitch);
-    heap* h = initializeHeap();
 
+    /* Create process array */
     *p = (process**)calloc(*processAmt, sizeof(process*)); // Create process array
     int pNum;
     int tAmt;
@@ -104,8 +128,9 @@ heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, 
         }        
     }
 
-    //TODO TEMP
-    printProcesses(*p, pNum);
+    /* Copy pointers to process array into heap */
+    heap* h = initializeHeap(*p, pNum);
+
     return h;
 }
 
@@ -261,13 +286,6 @@ float getAverageTurnaroundTime(process** processes, int processAmt) {
     return avgTime;
 }
 
-bool isEmpty(heap* h) {
-    if(h == NULL) {
-        return true;
-    }
-    return h->curr_size == 0;
-}
-
 // Frees a list of processes
 void freeProcesses(process*** processes, int processAmt) {
     if(*processes != NULL) {
@@ -308,14 +326,178 @@ void freeBursts(cpuBurst** bursts, int burstAmt) {
     }
 }
 
-//TODO TEMP
-heap* initializeHeap() {
-    return NULL;
-}
-
 // Validates that new line is present at the end of the stdin line
 bool validateLineEnding() {
     char tempchar;
     while( (tempchar = getc(stdin)) == ' '); // get rid of whitespace
     return (tempchar == '\n' || tempchar == '\0' || tempchar == EOF); // Checks final character for new line
+}
+
+/* HEAP FUNCTIONS */
+bool isEmpty(heap* h) {
+    if(h == NULL) {
+        return true;
+    }
+    return h->curr_size == 0;
+}
+
+//TODO TEMP
+heap* initializeHeap(process** pList, int pNum) {
+    // Create a new heap
+    heap* h;
+    h = (heap*)malloc(sizeof(heap));
+    h->curr_size = 0;
+
+    // Ingest data from array into heap
+    for(int i = 0; i < pNum; i++) {
+        for(int j = 0; j < pList[i]->threadAmt; j++) {
+            insertItem(h, pList[i]->threads[j]->arrTime, pList[i]->threads[j], 0);
+        }
+    }
+
+    return h;
+}
+
+void insertItem(heap* h, int key, void* data, int currBurst) {
+    // Create new node
+    node* newNode = (node*)malloc(sizeof(node));
+    newNode->currBurst = currBurst;
+    newNode->key = key;
+    newNode->data = data;
+
+    // Add node to heap
+    h->curr_size++;
+    if(h->curr_size <= 1) { // no nodes in heap yet
+        h->harr = (node**)malloc(h->curr_size * sizeof(node*));
+        (h->harr)[0] = newNode;
+    }
+    else { // Nodes present in heap
+        h->harr = (node**)realloc(h->harr, h->curr_size * sizeof(node*)); // Make space for another node
+        //bubble(h);  // Move all nodes one to the right
+        (h->harr)[h->curr_size-1] = newNode; // Set last node to new node
+        upheap(h, h->curr_size-1); // Restore heap balance
+    }
+}
+
+// Returned value must be freed by the caller
+node* removeMin(heap* h) {
+    node* topNode;
+    if(h != NULL && h->curr_size > 0) {
+        topNode = minElement(h);
+        (h->harr)[0] = NULL; // Remove the pointer from the heap
+        swapNodes( &((h->harr)[0]), &((h->harr)[h->curr_size-1]) ); // Swap root node with last node
+
+        h->curr_size--; // Reallocate heap
+        h->harr = (node**)realloc(h->harr, h->curr_size * sizeof(node*));
+
+        downheap(h, 0); // Rebalance heap
+    }
+    
+}
+
+void upheap(heap* h, int i) {
+    thread* t1;
+    thread* t2;
+    
+    int currIndex;
+    int parentIndex = getParentIndex(i);
+    if( (h->harr)[parentIndex]->key > (h->harr)[i]->key ) { // left node is greater than current node
+        swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
+        upheap(h, parentIndex);
+    }
+    else if( (h->harr)[parentIndex]->key == (h->harr)[i]->key ) { // left node is equal to right node TODO NOT SURE IF THIS IS RIGHT
+        t1 = (thread*) (h->harr)[parentIndex]->data;
+        t2 = (thread*) (h->harr)[i]->data;
+
+        if( t1->PNo > t2->PNo ) { // Process number of left node is greater than right node
+            swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
+            upheap(h, parentIndex);
+        }
+    }
+}
+
+void downheap(heap* h, int i) {
+    node* n1;
+    node* n2;
+    thread* t1;
+    thread* t2;
+    
+    int min;
+    int rightIndex= getRightIndex(i);
+    int leftIndex = getLeftIndex(i);
+
+    if(h->curr_size <= 1) {
+        return;
+    }
+
+    // Bound checking
+    if(leftIndex < 0 || leftIndex >= h->curr_size) { leftIndex = -1;}
+    if(rightIndex < 0 || rightIndex >= h->curr_size) { rightIndex = -1;}
+
+    min = i; // Set min to parent
+    if(leftIndex != -1 && h->harr[leftIndex]->key < h->harr[min]->key) { // Compare left with min
+        min = leftIndex;
+    }
+    if(rightIndex != -1 && h->harr[rightIndex]->key < h->harr[min]->key) { // Compare right with min
+        min = rightIndex;
+    }
+    if(min != i) { // Swap the minimum with i
+        swapNodes( &((h->harr)[min]), &((h->harr)[i]) );
+        downheap(h, min);
+    }
+}
+
+void swapNodes(node** n1, node** n2) {
+    node* temp;
+    temp = *n1;
+    *n1 = *n2;
+    *n2 = temp;
+}
+
+void printHeap(heap* h) {
+    thread* t;
+    if(h != NULL) {
+        for(int i = 0; i < h->curr_size; i++) {
+            t = (thread*)(h->harr)[i]->data;
+            printf("Key: %d, Thread #: %d, Process #: %d, currentBurst: %d\n", 
+            (h->harr)[i]->key, t->TNo, t->PNo, (h->harr)[i]->currBurst);
+        }
+    }
+}
+
+void freeHeap(heap* h) {
+    if(h != NULL) {
+        for(int i = 0; i < h->curr_size; i++) {
+            free((h->harr)[i]);
+        }
+        if(h->harr != NULL)
+            free(h->harr);
+        free(h);
+    }
+}
+
+int minKey(heap* h) {
+    if(h != NULL && h->curr_size != 0) {
+        return ( (h->harr)[0]->key);
+    }
+    return -1;
+}
+
+node* minElement(heap* h) {
+    if(h != NULL && h->curr_size != 0) {
+        return (h->harr)[0];
+    }
+    return NULL;
+}
+
+int getParentIndex(int index) {
+    return (index - 1) / 2;
+}
+
+int getLeftIndex(int index) {
+    return 2*index + 1;
+}
+
+int getRightIndex(int index) {
+    return 2*index + 2;
 }

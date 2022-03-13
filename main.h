@@ -36,10 +36,11 @@ typedef struct {
 typedef struct {
     int key;
     void* data;
+    int currBurst; // IS AN INDEX, ADD +1 WHEN COMPARING TO BURSTNO IN A THREAD
 } node;
 
 typedef struct {
-    node* harr;
+    node** harr;
     int curr_size;
 } heap;
 
@@ -48,6 +49,7 @@ heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, 
 thread** createThreadList( int pNum, int tAmt );
 cpuBurst** createBurstList(int burstAmt, int tNum);
 bool validateLineEnding();
+void updateReadyQueue(heap h, int timeElapsed);
 
 /* Process/Thread Helper Functions */
 int getTotalIOTime(thread* t);
@@ -60,16 +62,23 @@ void freeThreads( thread** threads, int threadAmt);
 void freeBursts(cpuBurst** bursts, int burstAmt);
 
 /* Heap Functions */
-heap* initializeHeap();
-void insertItem(heap* h, int key, void* data);
-void* removeMin(heap* h); // Removes and returns top node
+heap* initializeHeap(process** pList, int pNum);
+void insertItem(heap* h, int key, void* data, int currBurst);
+node* removeMin(heap* h); // Removes and returns top node
+int getParentIndex(int index);
+int getLeftIndex(int index);
+int getRightIndex(int index);
+//void bubble(heap* h); // Moves all nodes one to the right, makes space for new node
+void upheap(heap* h, int index); // Restores heap-order after insertion MUST BE CALLED IN INSERT
+void downheap(heap* h, int i); // Restores heap-order after removal MUST BE CALLED IN REMOVE
 
 int minKey(heap* h); // Gets the arrival time of the top node
 node* minElement(heap* h); // Gets a whole thread from the top node
 int heapSize(heap* h); // Returns the total size of a given heap
 bool isEmpty(heap* h);
+void swapNodes(node** n1, node** n2); // Swaps two nodes, double pointers so the values can be carried out of the function
 
-void upheap(heap* h); // Restores heap-order after insertion MUST BE CALLED IN INSERT
-void downheap(heap* h); // Restores heap-order after removal MUST BE CALLED IN REMOVE
+void printHeap(heap* h);
+void freeHeap(heap* h);
 
 #endif /* SIMCPU */
