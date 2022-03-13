@@ -47,6 +47,7 @@ typedef struct {
 heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, int* processSwitch) ;
 thread** createThreadList( int pNum, int tAmt );
 cpuBurst** createBurstList(int burstAmt, int tNum);
+bool validateLineEnding();
 
 /* Process/Thread Helper Functions */
 int getTotalIOTime(thread* t);

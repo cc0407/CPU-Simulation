@@ -12,8 +12,8 @@ int main(int argc, char* argv[]) {
     float CPUUtilizationTime = 0;
     heap* h;
 
-    processes = (process***)malloc(1 * sizeof(process**));
-    *processes = NULL;
+    processes = (process***)calloc(1, sizeof(process**));
+
     h = initializePriorityQueue(processes, &processAmt, &threadSwitch, &processSwitch);
     if(!h) { // heap was not initialized correctly, exiting program
         fprintf(stderr, "Min-heap not initialized correctly. Exiting...\n");
@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
 // TODO Read all Processes / Threads / CPU Bursts into their own arrays
 // TODO Turn those arrays into a heap measuring arrival time
 heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, int* processSwitch) {
-    if( scanf(" %d %d %d ", processAmt, threadSwitch) != 3) {
+    if( scanf(" %d %d %d", processAmt, threadSwitch) != 3 || !validateLineEnding()) {
         fprintf(stderr, "Error ingesting line 0 of input file.\n");
         return NULL;
     }
@@ -90,24 +90,28 @@ heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, 
     int pNum;
     int tAmt;
     for(int i = 0; i < *processAmt; i++) {
-        process* newP = (process*)calloc(1, sizeof(process));
-        if( scanf(" %d %d ", &pNum, &tAmt) != 2 ) {
+        process* newP = (process*)calloc(1, sizeof(process)); // Create local pointer and add it to process list
+        (*p)[i] = newP; // Create Process inside of process array
+        
+        if( scanf(" %d %d", &pNum, &tAmt) != 2 || !validateLineEnding()) {
             fprintf(stderr, "Error ingesting process %d.\n", i+1);
             return NULL;
         }
         newP->threadAmt = tAmt;
         newP->threads = createThreadList( pNum, tAmt);
-
-        (*p)[i] = newP; // Create Process inside of process array
+        if(newP->threads == NULL) { 
+            return NULL; 
+        }        
     }
 
+    //TODO TEMP
     printProcesses(*p, pNum);
     return h;
 }
 
 // Creates a list of threads using data from stdin
 thread** createThreadList( int pNum, int tAmt ) {
-    thread** tList = (thread**)malloc(tAmt * sizeof(thread*));
+    thread** tList = (thread**)calloc(tAmt, sizeof(thread*));
     if(!tList) { return NULL; } // NULL Checks for failed malloc
 
     thread* newThread;
@@ -115,11 +119,13 @@ thread** createThreadList( int pNum, int tAmt ) {
     int arrTime;
     int bNo;
     for(int i = 0; i < tAmt; i++) {
-        newThread = createEmptyThread();
+        newThread = createEmptyThread();  // Create local pointer and add it to thread list
+        tList[i] = newThread;
         
-        if(!newThread || scanf(" %d %d %d ", &tNo, &arrTime, &bNo) != 3 ) { // NULL Checks thread and attempts to ingest more info from stdin
+        if(!newThread || scanf(" %d %d %d", &tNo, &arrTime, &bNo) != 3  || !validateLineEnding()) { // NULL Checks thread and attempts to ingest more info from stdin
         //if(!newThread || scanf(" %d %d %d ", newThread->TNo, newThread->arrTime, &bNo) != 3 ) {
             fprintf(stderr, "Error ingesting thread %d of process %d.\n", i+1, pNum);
+            freeThreads(tList, tAmt);
             return NULL;
         }
 
@@ -128,8 +134,10 @@ thread** createThreadList( int pNum, int tAmt ) {
         newThread->burstNo = bNo;
         newThread->PNo = pNum;
         newThread->bursts = createBurstList(newThread->burstNo, i+1);
-
-        tList[i] = newThread;
+        if(newThread->bursts == NULL) { 
+            freeThreads(tList, tAmt);
+            return NULL; 
+        }
         
     }
 
@@ -148,29 +156,32 @@ cpuBurst** createBurstList(int bAmt, int tNum) {
     int cpuTime;
     int ioTime;
     for(int i = 0; i < bAmt - 1; i++) {
-        newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst));
-        if(!newBurst || scanf(" %d %d %d", &burstNo, &cpuTime, &ioTime) != 3 ) { // NULL Checks burst and attempts to ingest more info from stdin
+        newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst)); // Create local pointer and add it to burst list
+        bList[i] = newBurst;
+
+        if(!newBurst || scanf(" %d %d %d", &burstNo, &cpuTime, &ioTime) != 3 || !validateLineEnding()) { // NULL Checks burst and attempts to ingest more info from stdin
             fprintf(stderr, "Error ingesting burst %d of thread %d.\n", i+1, tNum);
+            freeBursts(bList, bAmt);
             return NULL;
         }        
         newBurst->burstNo = burstNo;
         newBurst->cpuTime = cpuTime;
         newBurst->ioTime = ioTime;
 
-        bList[i] = newBurst;
+        
     }
 
     // Final burst, no IO
     newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst));
-    if(!newBurst || scanf(" %d %d ", &burstNo, &cpuTime) != 2 ) { // NULL Checks burst and attempts to ingest more info from stdin
-            fprintf(stderr, "Error ingesting burst %d of thread %d.\n", bAmt, tNum);
-            return NULL;
-        }        
-        newBurst->burstNo = burstNo;
-        newBurst->cpuTime = cpuTime;
-        newBurst->ioTime = 0;
-
-        bList[bAmt - 1] = newBurst;
+    bList[bAmt - 1] = newBurst;
+    if(!newBurst || scanf(" %d %d", &burstNo, &cpuTime) != 2 || !validateLineEnding()) { // NULL Checks burst and attempts to ingest more info from stdin
+        fprintf(stderr, "Error ingesting burst %d of thread %d.\n", bAmt, tNum);
+        freeBursts(bList, bAmt); // Frees burst list
+        return NULL;
+    }        
+    newBurst->burstNo = burstNo;
+    newBurst->cpuTime = cpuTime;
+    newBurst->ioTime = 0;
 
     return bList;
 }
@@ -300,4 +311,11 @@ void freeBursts(cpuBurst** bursts, int burstAmt) {
 //TODO TEMP
 heap* initializeHeap() {
     return NULL;
+}
+
+// Validates that new line is present at the end of the stdin line
+bool validateLineEnding() {
+    char tempchar;
+    while( (tempchar = getc(stdin)) == ' '); // get rid of whitespace
+    return (tempchar == '\n' || tempchar == '\0'); // Checks final character for new line
 }
