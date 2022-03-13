@@ -317,5 +317,5 @@ heap* initializeHeap() {
 bool validateLineEnding() {
     char tempchar;
     while( (tempchar = getc(stdin)) == ' '); // get rid of whitespace
-    return (tempchar == '\n' || tempchar == '\0'); // Checks final character for new line
+    return (tempchar == '\n' || tempchar == '\0' || tempchar == EOF); // Checks final character for new line
 }
