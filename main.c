@@ -92,11 +92,24 @@ int main(int argc, char* argv[]) {
                 // add time to process thread
                 //nextAvailTime += cpuTimeToAdd;
                 CPUUtilizationTime += cpuTimeToAdd;
-                if(n->currBurst == t->burstNo - 1) { // Final burst
-                    insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
+                if(RRTime == 0) { //FCFS
+                    if(n->currBurst == t->burstNo - 1) { // Final burst
+                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
+                    }
+                    else if(empty) {
+                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
+                    }
                 }
-                else if(empty) {
-                    insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
+                else {
+                    if(empty) {
+                        if(n->currBurst == t->burstNo - 1)// Final burst
+                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
+                        else
+                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
+                    }
+                    else {
+                        insertItem(h, nextAvailTime, t, n->currBurst, T_START); // Add this thread's switch to IO into the queue
+                    }
                 }
                 break;
             case T_END:
