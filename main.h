@@ -14,13 +14,13 @@ typedef struct {
     int burstNo;
     int cpuTime;
     int ioTime;
+    int currCpuTime;
+    int currIoTime;
 } cpuBurst;
 
 typedef struct {
     int arrTime; // Arrival Time
     int finTime; // Finish Time
-    int turnTime; // Turnaround Time
-    int serTime; // Service Time
     int PNo; // Process Number
     int TNo; // Thread Number
     int burstNo; // Number of bursts
@@ -49,10 +49,13 @@ heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, 
 thread** createThreadList( int pNum, int tAmt );
 cpuBurst** createBurstList(int burstAmt, int tNum);
 bool validateLineEnding();
-void updateReadyQueue(heap h, int timeElapsed);
+void updateReadyQueue(heap* h, int timeElapsed);
+int consumeTime(heap* h, node* n, int amt);
 
 /* Process/Thread Helper Functions */
 int getTotalIOTime(thread* t);
+int getTotalServiceTime(thread* t);
+int getTurnaroundTime(thread* t);
 float getAverageTurnaroundTime(process** processes, int processAmt);
 thread* createEmptyThread();
 void printProcesses(process** processes, int processAmt);
@@ -80,5 +83,9 @@ void swapNodes(node** n1, node** n2); // Swaps two nodes, double pointers so the
 
 void printHeap(heap* h);
 void freeHeap(heap* h);
+
+/* Other Functions */
+int min( int n1, int n2 );
+void stateSwitch(thread* t, state s);
 
 #endif /* SIMCPU */

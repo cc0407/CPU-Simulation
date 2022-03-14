@@ -1,14 +1,16 @@
 #include "main.h"
+
 bool detailed = false;
 bool verbose = false;
 int RRTime = 0;
+int timeElapsed = 0;
+char* enumString[5] = {"new", "ready", "running", "blocked", "terminated"};
+int threadSwitch;
+int processSwitch;
 
 int main(int argc, char* argv[]) {
     process*** processes;
     int processAmt;
-    int threadSwitch;
-    int processSwitch;
-    int timeElapsed = 0;
     int CPUUtilizationTime = 0;
     heap* h;
 
@@ -23,12 +25,10 @@ int main(int argc, char* argv[]) {
 
     // Input flag parsing
     for(int i = 1; i < argc; i++) {
-        if(strcmp(argv[i], "-d") == 0) { // -d flag was presented
+        if(strcmp(argv[i], "-d") == 0) // -d flag was presented
             detailed = true;
-        }
-        if(strcmp(argv[i], "-v") == 0) { // -d flag was presented
+        if(strcmp(argv[i], "-v") == 0) // -d flag was presented
             verbose = true;
-        }
         if(strcmp(argv[i], "-r") == 0) { // -r flag was presented
             i++;
             if(i >= argc) {
@@ -52,30 +52,58 @@ int main(int argc, char* argv[]) {
 
     node* currNode;
     thread* currThread;
+    int cpuCount = -1;
+    int prevPNo = -1;
+    int contextCount = 0;
     while( !isEmpty(h) ) {
-        if(timeElapsed >= minKey(h)) { // Next thread has arrived
-            currNode = removeMin(h);
-            currThread = (thread*)currNode;
-        }
-        switch (currThread->s) {
-            case READY:
-                currThread->s = RUNNING;
-                currThread->serTime = timeElapsed;
-                if(verbose)
-                    printf("At time %d: Thread %d of Process %d moves from ready to running.\n", timeElapsed, currThread->TNo, currThread->PNo);
-                break;
-            case RUNNING:
-                break;
-            default:
-                break;
+        updateReadyQueue(h, timeElapsed); // See if there are any new processes
+        if(cpuCount >= 0) { // CPU is busy with a process for [cpuCount] time units
+            if(cpuCount == 0) {
+                if(currThread->finTime == -2) // End of burst and no more bursts left in this thread
+                stateSwitch(currThread, TERMINATED);
+                currThread->finTime = timeElapsed;
+            }
+            else {
+                timeElapsed++;
+                CPUUtilizationTime++;
+            }
+            cpuCount--;
+            continue;
         }
 
-        //TODO EXTRACT EVENT FROM QUEUE
-        //TODO UPDATE TIME TO MATCH EVENT
-        //TODO Switch statement for type of event
-            //TODO PROCESS EVENT, POSSIBLY ADD MORE EVENTS TO THE QUEUE
-            //TODO COLLECT STATS      
-        timeElapsed++;
+        if(timeElapsed >= minKey(h)) { // Next thread is available
+            currNode = removeMin(h);
+            currThread = (thread*)(currNode->data);
+
+            if( prevPNo == -1)// Update process number to be this process
+                prevPNo = currThread->PNo;
+            else if( prevPNo == currThread->PNo ) // switch context to 
+                contextCount = threadSwitch;
+            else
+                contextCount = processSwitch;
+
+            while(contextCount > 0) {
+                updateReadyQueue(h, timeElapsed);
+                timeElapsed++;
+                contextCount--;
+            }
+
+            switch (currThread->s) {
+                case BLOCKED:
+                case READY:
+                    stateSwitch(currThread, RUNNING);
+                    /* FCFS */
+                    cpuCount = consumeTime(h, currNode, -1);// -1 because FCFS
+                    break;
+                case RUNNING: // For RR
+                    break;
+                default:
+                    break;
+            }
+            
+            free(currNode);
+        }
+
     }
 
     if(RRTime == 0)
@@ -86,7 +114,7 @@ int main(int argc, char* argv[]) {
     printf("Total Time required is %d units\n", timeElapsed);
     printf("Average Turnaround Time is %.1f time units\n", getAverageTurnaroundTime(*processes, processAmt));
     if(timeElapsed != 0)
-        printf("CPU Utilization is %d%%\n", CPUUtilizationTime / timeElapsed * 100);
+        printf("CPU Utilization is %d%%\n", CPUUtilizationTime / ((float)timeElapsed) * 100);
     else
         printf("CPU Utilization is 0%%\n");
 
@@ -99,8 +127,31 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// TODO Read all Processes / Threads / CPU Bursts into their own arrays
-// TODO Turn those arrays into a heap measuring arrival time
+int consumeTime(heap* h, node* n, int amt) {
+    
+    //FCFS
+    thread* t = (thread*)n->data;
+    cpuBurst** b = t->bursts;
+    int bNo = n->currBurst;
+    int num = b[bNo]->currCpuTime; // Pull the CPU time from the current burst
+
+    if(num == 0) { // cpu time for this burst has already been consumed
+        stateSwitch(t, BLOCKED);
+        n->currBurst++;
+        insertItem(h, timeElapsed + b[bNo]->currIoTime, t, bNo); // consume iotime for this burst
+    }
+    else { // consume cpu time for this burst
+        b[bNo]->currCpuTime = 0;
+        if(b[bNo]->ioTime == -1) { // Final burst, no io time
+            t->finTime = -2;
+        }
+        else {
+            insertItem(h, b[bNo]->currIoTime, t, bNo); // consume burst and add back into queue
+        }
+    }
+    return num;
+}
+
 heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, int* processSwitch) {
     if( scanf(" %d %d %d", processAmt, threadSwitch) != 3 || !validateLineEnding()) {
         fprintf(stderr, "Error ingesting line 0 of input file.\n");
@@ -192,6 +243,8 @@ cpuBurst** createBurstList(int bAmt, int tNum) {
         newBurst->burstNo = burstNo;
         newBurst->cpuTime = cpuTime;
         newBurst->ioTime = ioTime;
+        newBurst->currCpuTime = cpuTime;
+        newBurst->currIoTime = ioTime;
 
         
     }
@@ -206,9 +259,26 @@ cpuBurst** createBurstList(int bAmt, int tNum) {
     }        
     newBurst->burstNo = burstNo;
     newBurst->cpuTime = cpuTime;
-    newBurst->ioTime = 0;
+    newBurst->ioTime = -1;
+    newBurst->currCpuTime = cpuTime;
+    newBurst->currIoTime = ioTime;
 
     return bList;
+}
+
+void updateReadyQueue(heap* h, int timeElapsed) {
+    thread* t;
+    if(h != NULL) { // Null Check for heap
+        for(int i = 0; i < h->curr_size; i++) {
+            t = (thread*)(h->harr)[i]->data;
+            if(t->arrTime <= timeElapsed && t->s == NEW) { // Process should be added to the ready queue
+                if(verbose) {
+                    printf("At time %d: Thread %d of Process %d moves from new to ready.\n", timeElapsed, t->TNo, t->PNo);
+                }
+                t->s = READY;
+            }
+        }
+    }
 }
 
 // Initializes an empty thread and returns it
@@ -220,8 +290,6 @@ thread* createEmptyThread() {
     newThread->TNo = -1;
     newThread->arrTime = -1; // Arrival Time
     newThread->finTime = -1; // Finish Time
-    newThread->turnTime = -1; // Turnaround Time
-    newThread->serTime = -1; // Service Time
     newThread->bursts = NULL;
     newThread->s = NEW;
 
@@ -249,7 +317,7 @@ void printThreads(thread** threads, int threadAmt) {
                 printf("Thread %d of Process %d:\n", currThread->TNo, currThread->PNo);
                 printf("\tarrival time: %d\n", currThread->arrTime);
                 printf("\tservice time: %d units, I/O time: %d units, turnaround time: %d units, finish time: %d units\n", 
-                    currThread->serTime, getTotalIOTime(currThread), currThread->turnTime, currThread->finTime);
+                    getTotalServiceTime(currThread), getTotalIOTime(currThread), getTurnaroundTime(currThread), currThread->finTime);
             }
         }
     }  
@@ -261,13 +329,32 @@ void printThreads(thread** threads, int threadAmt) {
 int getTotalIOTime(thread* t) {
     int sum = 0;
     if ( t != NULL ) {
-        for(int i = 0; i < t->burstNo; i++) {
+        for(int i = 0; i < t->burstNo - 1; i++) {
             sum+= t->bursts[i]->ioTime;
         }
         return sum;
     }
     else
         return sum;
+}
+
+int getTotalServiceTime(thread* t) {
+    int sum = 0;
+    if ( t != NULL ) {
+        for(int i = 0; i < t->burstNo; i++) {
+            sum+= t->bursts[i]->cpuTime;
+        }
+        return sum;
+    }
+    else
+        return sum;
+}
+
+int getTurnaroundTime(thread* t) {
+    if ( t != NULL ) {
+        return t->finTime - t->arrTime;
+    }
+    return -1;
 }
 
 float getAverageTurnaroundTime(process** processes, int processAmt) {
@@ -277,7 +364,7 @@ float getAverageTurnaroundTime(process** processes, int processAmt) {
         for(int i = 0; i < processAmt; i++) { // Iterate through each process
             threadAvgTime = 0;
             for(int j = 0; j < processes[i]->threadAmt; j++) { // Iterate through each thread
-                threadAvgTime += processes[i]->threads[i]->turnTime;
+                threadAvgTime += getTurnaroundTime(processes[i]->threads[i]);
             }
             threadAvgTime /= processes[i]->threadAmt;
             avgTime += threadAvgTime;
@@ -392,6 +479,8 @@ node* removeMin(heap* h) {
 
         downheap(h, 0); // Rebalance heap
     }
+
+    return topNode;
     
 }
 
@@ -500,4 +589,17 @@ int getLeftIndex(int index) {
 
 int getRightIndex(int index) {
     return 2*index + 2;
+}
+
+int min( int n1, int n2 ) {
+    return (n1 <= n2) ? n1 : n2;
+}
+
+void stateSwitch(thread* t, state s) {
+    if(t != NULL) {
+        state prevState = t->s;
+        t->s = s;
+        if(verbose)
+            printf("At time %d: Thread %d of Process %d moves from %s to %s.\n", timeElapsed, t->TNo, t->PNo, enumString[prevState], enumString[s]);
+    }
 }
