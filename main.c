@@ -96,7 +96,7 @@ int main(int argc, char* argv[]) {
                     insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
                 }
                 else if(empty) {
-                    insertItem(h, nextAvailTime, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
+                    insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
                 }
                 break;
             case T_END:
