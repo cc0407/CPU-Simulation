@@ -114,54 +114,6 @@ int main(int argc, char* argv[]) {
             default:
                 break;
         }
-        /*updateReadyQueue(h, timeElapsed); // See if there are any new processes
-        if(cpuCount >= 0) { // CPU is busy with a process for [cpuCount] time units
-            if(cpuCount == 0) {
-                if(currThread->finTime == -2) // End of burst and no more bursts left in this thread
-                stateSwitch(currThread, TERMINATED);
-                currThread->finTime = timeElapsed;
-            }
-            else {
-                timeElapsed++;
-                CPUUtilizationTime++;
-            }
-            cpuCount--;
-            continue;
-        }
-
-        if(timeElapsed >= minKey(h)) { // Next thread is available
-            currNode = removeMin(h);
-            currThread = (thread*)(currNode->data);
-
-            if( prevPNo == -1)// Update process number to be this process
-                prevPNo = currThread->PNo;
-            else if( prevPNo == currThread->PNo ) // switch context to 
-                contextCount = threadSwitch;
-            else
-                contextCount = processSwitch;
-
-            while(contextCount > 0) {
-                updateReadyQueue(h, timeElapsed);
-                timeElapsed++;
-                contextCount--;
-            }
-
-            switch (currThread->s) {
-                case BLOCKED:
-                case READY:
-                    stateSwitch(currThread, RUNNING);
-                    //FCFS
-                    cpuCount = consumeTime(h, currNode, -1);// -1 because FCFS
-                    break;
-                case RUNNING: // For RR
-                    break;
-                default:
-                    break;
-            }
-            
-            free(currNode);
-        }
-*/
     }
 
     if(RRTime == 0)
@@ -172,7 +124,7 @@ int main(int argc, char* argv[]) {
     printf("Total Time required is %d units\n", nextAvailTime);
     printf("Average Turnaround Time is %.1f time units\n", getAverageTurnaroundTime(*processes, processAmt));
     if(nextAvailTime != 0)
-        printf("CPU Utilization is %d%%\n", ((float)CPUUtilizationTime / ((float)nextAvailTime)) * 100);
+        printf("CPU Utilization is %0.1f%%\n", ((float)CPUUtilizationTime / (float)nextAvailTime) * 100);
     else
         printf("CPU Utilization is 0%%\n");
 
