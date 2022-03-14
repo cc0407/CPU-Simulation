@@ -3,7 +3,6 @@
 bool detailed = false;
 bool verbose = false;
 int RRTime = 0;
-int timeElapsed = 0;
 char* enumString[5] = {"new", "ready", "running", "blocked", "terminated"};
 int threadSwitch;
 int processSwitch;
@@ -50,13 +49,61 @@ int main(int argc, char* argv[]) {
     //printf("Detailed: %d\nVerbose: %d\nRound Robin: %d\n", detailed, verbose, RRTime);
     //printHeap(h);
 
-    node* currNode;
-    thread* currThread;
-    int cpuCount = -1;
+    node* n;
+    thread* t;
+    int cpuTimeToAdd;
     int prevPNo = -1;
-    int contextCount = 0;
+    int nextAvailTime = 0;
+    int timeInCpu = 0;
+    bool empty;
     while( !isEmpty(h) ) {
-        updateReadyQueue(h, timeElapsed); // See if there are any new processes
+        n = removeMin(h);
+        t = (thread*)(n->data);
+
+        switch(n->e) {
+            case ARRIVAL:
+                stateSwitch(t, READY, n->key);
+                insertItem(h, nextAvailTime, t, n->currBurst, T_START); // Add the start time back into the event queue
+                break;
+            case T_START:
+                if( prevPNo == -1) // Apply delay for context switch
+                    prevPNo = t->PNo;
+                else if( prevPNo == t->PNo )
+                    incrementAllKeys(h, threadSwitch);
+                else
+                    incrementAllKeys(h, processSwitch);
+
+                if(t->s != RUNNING)
+                    stateSwitch(t, RUNNING, n->key);
+
+                cpuTimeToAdd = consumeTime(h, n, RRTime, &empty);
+
+                // add time to process thread
+                nextAvailTime += cpuTimeToAdd;
+                CPUUtilizationTime += cpuTimeToAdd;
+                if(n->currBurst == t->burstNo - 1) { // Final burst
+                    insertItem(h, nextAvailTime, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
+                }
+                else if(empty) {
+                    insertItem(h, nextAvailTime, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
+                }
+                break;
+            case T_END:
+                stateSwitch(t, TERMINATED, n->key);
+                t->finTime = n->key;
+                break;
+            case T_BLOCKED:
+                stateSwitch(t, BLOCKED, n->key);
+                cpuTimeToAdd = consumeTime(h, n, RRTime, &empty);
+                if(empty) // Move onto next burst
+                    n->currBurst++;
+                //TODO NOT SURE ABOUT TIME FOR THIS
+                insertItem(h, nextAvailTime + cpuTimeToAdd, t, n->currBurst, T_START); // Add next burst into the queue
+                break;
+            default:
+                break;
+        }
+        /*updateReadyQueue(h, timeElapsed); // See if there are any new processes
         if(cpuCount >= 0) { // CPU is busy with a process for [cpuCount] time units
             if(cpuCount == 0) {
                 if(currThread->finTime == -2) // End of burst and no more bursts left in this thread
@@ -92,7 +139,7 @@ int main(int argc, char* argv[]) {
                 case BLOCKED:
                 case READY:
                     stateSwitch(currThread, RUNNING);
-                    /* FCFS */
+                    //FCFS
                     cpuCount = consumeTime(h, currNode, -1);// -1 because FCFS
                     break;
                 case RUNNING: // For RR
@@ -103,7 +150,7 @@ int main(int argc, char* argv[]) {
             
             free(currNode);
         }
-
+*/
     }
 
     if(RRTime == 0)
@@ -111,10 +158,10 @@ int main(int argc, char* argv[]) {
     else
         printf("Round Robin Scheduling (quantum = %d time units)\n", RRTime);
 
-    printf("Total Time required is %d units\n", timeElapsed);
+    printf("Total Time required is %d units\n", nextAvailTime);
     printf("Average Turnaround Time is %.1f time units\n", getAverageTurnaroundTime(*processes, processAmt));
-    if(timeElapsed != 0)
-        printf("CPU Utilization is %d%%\n", CPUUtilizationTime / ((float)timeElapsed) * 100);
+    if(nextAvailTime != 0)
+        printf("CPU Utilization is %d%%\n", CPUUtilizationTime / ((float)nextAvailTime) * 100);
     else
         printf("CPU Utilization is 0%%\n");
 
@@ -127,28 +174,30 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-int consumeTime(heap* h, node* n, int amt) {
-    
-    //FCFS
+int consumeTime(heap* h, node* n, int amt, bool* emptyFlag) {
     thread* t = (thread*)n->data;
     cpuBurst** b = t->bursts;
     int bNo = n->currBurst;
     int num = b[bNo]->currCpuTime; // Pull the CPU time from the current burst
 
-    if(num == 0) { // cpu time for this burst has already been consumed
-        stateSwitch(t, BLOCKED);
-        n->currBurst++;
-        insertItem(h, timeElapsed + b[bNo]->currIoTime, t, bNo); // consume iotime for this burst
-    }
-    else { // consume cpu time for this burst
-        b[bNo]->currCpuTime = 0;
-        if(b[bNo]->ioTime == -1) { // Final burst, no io time
-            t->finTime = -2;
+    if(num != 0) { // CPU time hasnt been consumed yet for this burst
+        if(amt == 0) { //FCFS
+            b[bNo]->currCpuTime = 0;
+            *emptyFlag = true;
         }
-        else {
-            insertItem(h, b[bNo]->currIoTime, t, bNo); // consume burst and add back into queue
+        else { //RR with time quantum of [amt]
+            num = min(b[bNo]->currCpuTime, amt); 
+            b[bNo]->currCpuTime -= num;
+
+            *emptyFlag = (b[bNo]->currCpuTime == 0); // See if there is any cpu burst left, set empty flag if not
         }
     }
+    else { // Consume IO Time
+        num = b[bNo]->currIoTime;
+        b[bNo]->currIoTime = 0;
+        *emptyFlag = true;
+    }
+
     return num;
 }
 
@@ -259,7 +308,7 @@ cpuBurst** createBurstList(int bAmt, int tNum) {
     }        
     newBurst->burstNo = burstNo;
     newBurst->cpuTime = cpuTime;
-    newBurst->ioTime = -1;
+    newBurst->ioTime = 0;
     newBurst->currCpuTime = cpuTime;
     newBurst->currIoTime = ioTime;
 
@@ -438,19 +487,20 @@ heap* initializeHeap(process** pList, int pNum) {
     // Ingest data from array into heap
     for(int i = 0; i < pNum; i++) {
         for(int j = 0; j < pList[i]->threadAmt; j++) {
-            insertItem(h, pList[i]->threads[j]->arrTime, pList[i]->threads[j], 0);
+            insertItem(h, pList[i]->threads[j]->arrTime, pList[i]->threads[j], 0, ARRIVAL);
         }
     }
 
     return h;
 }
 
-void insertItem(heap* h, int key, void* data, int currBurst) {
+void insertItem(heap* h, int key, void* data, int currBurst, event e) {
     // Create new node
     node* newNode = (node*)malloc(sizeof(node));
     newNode->currBurst = currBurst;
     newNode->key = key;
     newNode->data = data;
+    newNode->e = e;
 
     // Add node to heap
     h->curr_size++;
@@ -495,13 +545,18 @@ void upheap(heap* h, int i) {
         upheap(h, parentIndex);
     }
     else if( (h->harr)[parentIndex]->key == (h->harr)[i]->key ) { // left node is equal to right node TODO NOT SURE IF THIS IS RIGHT
-        t1 = (thread*) (h->harr)[parentIndex]->data;
+        if((h->harr)[parentIndex]->e > (h->harr)[i]->e) {
+            swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
+            upheap(h, parentIndex);
+        }
+        /*t1 = (thread*) (h->harr)[parentIndex]->data;
         t2 = (thread*) (h->harr)[i]->data;
 
         if( t1->PNo > t2->PNo ) { // Process number of left node is greater than right node
             swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
             upheap(h, parentIndex);
         }
+        */
     }
 }
 
@@ -595,11 +650,19 @@ int min( int n1, int n2 ) {
     return (n1 <= n2) ? n1 : n2;
 }
 
-void stateSwitch(thread* t, state s) {
+void stateSwitch(thread* t, state s, int nextAvailTime) {
     if(t != NULL) {
         state prevState = t->s;
         t->s = s;
         if(verbose)
-            printf("At time %d: Thread %d of Process %d moves from %s to %s.\n", timeElapsed, t->TNo, t->PNo, enumString[prevState], enumString[s]);
+            printf("At time %d: Thread %d of Process %d moves from %s to %s.\n", nextAvailTime, t->TNo, t->PNo, enumString[prevState], enumString[s]);
+    }
+}
+
+void incrementAllKeys(heap* h, int amt) {
+    if(h != NULL) {
+        for(int i = 0; i < h->curr_size; i++) {
+            (h->harr)[i]->key += amt;
+        }
     }
 }

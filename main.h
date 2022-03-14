@@ -6,9 +6,13 @@
 #include <stdbool.h>
 #include <string.h>
 
-typedef enum STATE {
+typedef enum {
     NEW, READY, RUNNING, BLOCKED, TERMINATED
 } state;
+
+typedef enum {
+    T_BLOCKED, T_START, T_END, ARRIVAL
+} event;
 
 typedef struct {
     int burstNo;
@@ -37,6 +41,7 @@ typedef struct {
     int key;
     void* data;
     int currBurst; // IS AN INDEX, ADD +1 WHEN COMPARING TO BURSTNO IN A THREAD
+    event e;
 } node;
 
 typedef struct {
@@ -50,7 +55,7 @@ thread** createThreadList( int pNum, int tAmt );
 cpuBurst** createBurstList(int burstAmt, int tNum);
 bool validateLineEnding();
 void updateReadyQueue(heap* h, int timeElapsed);
-int consumeTime(heap* h, node* n, int amt);
+int consumeTime(heap* h, node* n, int amt, bool* emptyFlag);
 
 /* Process/Thread Helper Functions */
 int getTotalIOTime(thread* t);
@@ -66,7 +71,7 @@ void freeBursts(cpuBurst** bursts, int burstAmt);
 
 /* Heap Functions */
 heap* initializeHeap(process** pList, int pNum);
-void insertItem(heap* h, int key, void* data, int currBurst);
+void insertItem(heap* h, int key, void* data, int currBurst, event e);
 node* removeMin(heap* h); // Removes and returns top node
 int getParentIndex(int index);
 int getLeftIndex(int index);
@@ -80,12 +85,13 @@ node* minElement(heap* h); // Gets a whole thread from the top node
 int heapSize(heap* h); // Returns the total size of a given heap
 bool isEmpty(heap* h);
 void swapNodes(node** n1, node** n2); // Swaps two nodes, double pointers so the values can be carried out of the function
+void incrementAllKeys(heap* h, int amt);
 
 void printHeap(heap* h);
 void freeHeap(heap* h);
 
 /* Other Functions */
 int min( int n1, int n2 );
-void stateSwitch(thread* t, state s);
+void stateSwitch(thread* t, state s, int nextAvailTime);
 
 #endif /* SIMCPU */
