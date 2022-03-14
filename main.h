@@ -11,7 +11,7 @@ typedef enum {
 } state;
 
 typedef enum {
-    T_BLOCKED, T_START, T_END, ARRIVAL
+    T_BLOCKED, T_UNBLOCKED, T_END, T_START, ARRIVAL
 } event;
 
 typedef struct {
@@ -56,6 +56,7 @@ cpuBurst** createBurstList(int burstAmt, int tNum);
 bool validateLineEnding();
 void updateReadyQueue(heap* h, int timeElapsed);
 int consumeTime(heap* h, node* n, int amt, bool* emptyFlag);
+int peakTime(heap* h, node* n, int amt);
 
 /* Process/Thread Helper Functions */
 int getTotalIOTime(thread* t);
