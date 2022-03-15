@@ -1,28 +1,28 @@
 #include "main.h"
 
-bool detailed = false;
-bool verbose = false;
-int RRTime = 0;
-char* enumString[5] = {"new", "ready", "running", "blocked", "terminated"};
-int threadSwitch;
-int processSwitch;
+bool detailed = false; // flag for -d input param
+bool verbose = false; // flag for -v input param
+int RRTime = 0; // flag for -r input param
+char* enumString[5] = {"new", "ready", "running", "blocked", "terminated"}; // For printing thread info in verbose mode
+char* eventString[6] = {"T_BLOCKED", "T_UNBLOCKED", "T_ARRIVAL", "T_CONTINUE", "T_END", "T_START"}; // For debugging heap
 
 int main(int argc, char* argv[]) {
+    /* Initialize DES Min heap */
     process*** processes;
     int processAmt;
-    int CPUUtilizationTime = 0;
+    int threadSwitch;
+    int processSwitch;
     heap* h;
 
     processes = (process***)calloc(1, sizeof(process**));
-
     h = initializePriorityQueue(processes, &processAmt, &threadSwitch, &processSwitch);
-    if(!h) { // heap was not initialized correctly, exiting program
+    if(!h) { // heap was not initialized correctly
         fprintf(stderr, "Min-heap not initialized correctly. Exiting...\n");
         freeProcesses(processes, processAmt);
         return 1;
     }   
 
-    // Input flag parsing
+    /* Parse Input Parameters */
     for(int i = 1; i < argc; i++) {
         if(strcmp(argv[i], "-d") == 0) // -d flag was presented
             detailed = true;
@@ -30,12 +30,13 @@ int main(int argc, char* argv[]) {
             verbose = true;
         if(strcmp(argv[i], "-r") == 0) { // -r flag was presented
             i++;
-            if(i >= argc) {
+            if(i >= argc) { // No time quantum presented
                 fprintf(stderr, "A time quantum is required with -r flag.\nUsage: simcpu [-d] [-r] [quantum] < input_file\n");
                 freeProcesses(processes, processAmt);
                 return(1);
             }
 
+            // read time quantum in from argv
             RRTime = atoi(argv[i]);
             if(RRTime == 0) {
                 fprintf(stderr, "please indicate a numeric, positive time quantum.\nUsage: simcpu [-d] [-r] [quantum] < input_file\n");
@@ -45,91 +46,88 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    //TODO DEBUGGING
-    //printf("Detailed: %d\nVerbose: %d\nRound Robin: %d\n", detailed, verbose, RRTime);
-    //printHeap(h);
-
+    /* Run Simulation */
     node* n;
     thread* t;
+    int CPUUtilizationTime = 0;
     int cpuTimeToAdd;
     int prevPNo = -1;
     int prevTNo = -1;
     int nextAvailTime = 0;
     int timeInCpu = 0;
     bool empty;
+    int delayAmt;
     while( !isEmpty(h) ) {
         n = removeMin(h);
         t = (thread*)(n->data);
 
         if(nextAvailTime < n->key) { // Check for "nothing events" where time has passed with the CPU idle
             nextAvailTime = n->key; // Update next available time to be now
-            // CPU was idle, there was no previous thread running
-            prevPNo = -1;
+            prevPNo = -1; // CPU was idle, no previous thread running
             prevTNo = -1;
         }
 
         switch(n->e) {
-            case T_CONTINUE: // Move Thread to ready queue if its done its RR burst (T_CONTINUE), done its IO burst (T_UNBLOCKED), just arrived (ARRIVAL)
+            // Move thread to ready queue if its done its RR burst (T_CONTINUE), done its IO burst (T_UNBLOCKED), just arrived (ARRIVAL)
+            case T_CONTINUE: 
             case T_UNBLOCKED:
             case T_ARRIVAL:
                 stateSwitch(t, READY, n->key);
                 insertItem(h, nextAvailTime, t, n->currBurst, T_START); // Add the start time back into the event queue
-                nextAvailTime += peakTime(h, n, RRTime);
+                nextAvailTime += peakTime(n); // Push the end of the ready queue back to account for this process
                 break;
+            // Move thread off of ready queue and run it
             case T_START:
-                // Apply delay for context switch
-                if( prevPNo != -1 && (prevPNo != t->PNo || prevTNo != t->TNo)) { // Disregard delay if CPU was idle, or if this is the same thread as last event
-                    if( prevPNo == t->PNo ) {
-                        incrementAllKeys(h, threadSwitch);
-                        n->key += threadSwitch; // Update start time of this event
-                        nextAvailTime += threadSwitch;
-                    }
-                    else {
-                        incrementAllKeys(h, processSwitch);
-                        n->key += processSwitch; // Update start time of this event
-                        nextAvailTime += processSwitch;
-                    } 
+                // Apply delay to events for context switch. Disregard delay if CPU was idle, or if this is the same thread as last event
+                if( prevPNo != -1 && (prevPNo != t->PNo || prevTNo != t->TNo)) {
+                    if( prevPNo == t->PNo ) // Current thread is from the same process
+                        delayAmt = threadSwitch;
+                    else // Current thread is from a different process
+                        delayAmt = processSwitch;
+                    // Update all events to account for this delay
+                    incrementAllKeys(h, delayAmt);
+                    n->key += delayAmt;
+                    nextAvailTime += delayAmt;
                 }
                 prevPNo = t->PNo;
                 prevTNo = t->TNo;
 
+                // Set state of current thread to running
                 if(t->s != RUNNING)
                     stateSwitch(t, RUNNING, n->key);
 
-                cpuTimeToAdd = consumeTime(h, n, RRTime, &empty);
-
-                // add time to process thread
+                // Add time to process thread
+                cpuTimeToAdd = consumeTime(n, &empty);
                 CPUUtilizationTime += cpuTimeToAdd;
+
                 if(RRTime == 0) { //FCFS
-                    if(n->currBurst == t->burstNo - 1) { // Final burst
-                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
-                    }
-                    else if(empty) {
-                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
-                    }
+                    if(n->currBurst == t->burstNo - 1) // Final burst
+                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the termination of this thread to the event queue
+                    else if(empty) // Not final burst but done its cpu time for this burst
+                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's "switch to IO" into the event queue
                 }
                 else { //RR 
-                    if(empty) {
-                        if(n->currBurst == t->burstNo - 1)// Final burst, set event to terminate thread after this IO burst
-                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
-                        else // More to compute, set this thread to blocked and set an event to put back into ready queue once IO is done
-                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
+                    if(empty) { // CPU time completed for this burst
+                        if(n->currBurst == t->burstNo - 1)// Final burst
+                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the termination of this thread to the event queue
+                        else // Not final burst but done its cpu time for this burst
+                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's "switch to IO" into the event queue
                     }
-                    else { // Create an event at the end of this RR burst to block the thread and get it back into the ready queue
-                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_CONTINUE); // Add this thread's switch to IO into the queue
-                    }
+                    else // CPU time not completed for this burst
+                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_CONTINUE); // Move this thread back into ready queue after cpu is done
                 }
                 break;
+            // Current thread is finishing its final burst, terminate it
             case T_END:
                 stateSwitch(t, TERMINATED, n->key);
                 t->finTime = n->key;
                 break;
+            // Current thread is finishing cpu time for this burst, move to IO queue and block this thread
             case T_BLOCKED:
                 stateSwitch(t, BLOCKED, n->key);
-                cpuTimeToAdd = consumeTime(h, n, RRTime, &empty);
-                if(empty) // Move onto next burst
+                cpuTimeToAdd = consumeTime(n, &empty); // Variable represents IO burst time in this case, not CPU burst time
+                if(empty) // Move thread onto its next burst
                     n->currBurst++;
-                //TODO NOT SURE ABOUT TIME FOR THIS
                 insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_UNBLOCKED); // Add next burst into the queue
                 break;
             default:
@@ -137,6 +135,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    /* Print Statistics */
     if(RRTime == 0)
         printf("FCFS Scheduling\n");
     else
@@ -158,35 +157,34 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Nearly the same as consumeTime, but doesnt actually consume it
-int peakTime(heap* h, node* n, int amt) {
+// Returns the current amount of time that this burst will execute for
+int peakTime(node* n) {
     thread* t = (thread*)n->data;
     cpuBurst** b = t->bursts;
     int bNo = n->currBurst;
-    int num = b[bNo]->currCpuTime; // Pull the CPU time from the current burst
 
-    if(num != 0) { // CPU time hasnt been consumed yet for this burst
-        if(amt != 0){ //RR with time quantum of [amt]
-            num = min(b[bNo]->currCpuTime, amt); 
-        }
+    int num = b[bNo]->currCpuTime; // Pull the CPU time from the current burst
+    if(RRTime != 0){ //RR with time quantum of [amt], take min of time quantum or time remaining in burst
+        num = min(num, RRTime); 
     }
 
     return num;
 }
 
-int consumeTime(heap* h, node* n, int amt, bool* emptyFlag) {
+// Returns the current amount of time that this burst will execute for and consumes it in the thread
+int consumeTime(node* n, bool* emptyFlag) {
     thread* t = (thread*)n->data;
     cpuBurst** b = t->bursts;
     int bNo = n->currBurst;
-    int num = b[bNo]->currCpuTime; // Pull the CPU time from the current burst
 
+    int num = b[bNo]->currCpuTime; // Pull the CPU time from the current burst
     if(num != 0) { // CPU time hasnt been consumed yet for this burst
-        if(amt == 0) { //FCFS
+        if(RRTime == 0) { //FCFS
             b[bNo]->currCpuTime = 0;
             *emptyFlag = true;
         }
         else { //RR with time quantum of [amt]
-            num = min(b[bNo]->currCpuTime, amt); 
+            num = min(b[bNo]->currCpuTime, RRTime);  // Reduce time left in this burst by the min of time quantum and time remaining
             b[bNo]->currCpuTime -= num;
 
             *emptyFlag = (b[bNo]->currCpuTime == 0); // See if there is any cpu burst left, set empty flag if not
@@ -201,34 +199,35 @@ int consumeTime(heap* h, node* n, int amt, bool* emptyFlag) {
     return num;
 }
 
+// Creates the DES Min heap and reads info in from STDIN
 heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, int* processSwitch) {
+    /* Error Checking */
     if( scanf(" %d %d %d", processAmt, threadSwitch) != 3 || !validateLineEnding()) {
         fprintf(stderr, "Error ingesting line 0 of input file.\n");
         return NULL;
     }
-    //TODO DEBUGGING
-    //printf("processAmt: %d\nInternal Time: %d\nExternal Time: %d\n", *processAmt, *threadSwitch, *processSwitch);
 
     /* Create process array */
-    *p = (process**)calloc(*processAmt, sizeof(process*)); // Create process array
+    *p = (process**)calloc(*processAmt, sizeof(process*));
     int pNum;
     int tAmt;
-    for(int i = 0; i < *processAmt; i++) {
-        process* newP = (process*)calloc(1, sizeof(process)); // Create local pointer and add it to process list
-        (*p)[i] = newP; // Create Process inside of process array
+    for(int i = 0; i < *processAmt; i++) { // Iterate through all processes to be added
+        process* newP = (process*)calloc(1, sizeof(process)); // Add new process to list
+        (*p)[i] = newP;
         
-        if( scanf(" %d %d", &pNum, &tAmt) != 2 || !validateLineEnding()) {
+        if( scanf(" %d %d", &pNum, &tAmt) != 2 || !validateLineEnding()) { // NULL checks sim info and attempts to ingest more info from stdin
             fprintf(stderr, "Error ingesting process %d.\n", i+1);
             return NULL;
         }
-        newP->threadAmt = tAmt;
+
+        newP->threadAmt = tAmt; // Ingest threads from STDIN to this process
         newP->threads = createThreadList( pNum, tAmt);
         if(newP->threads == NULL) { 
             return NULL; 
         }        
     }
 
-    /* Copy pointers to process array into heap */
+    /* Copy pointers from process array to heap */
     heap* h = initializeHeap(*p, pNum);
 
     return h;
@@ -243,18 +242,17 @@ thread** createThreadList( int pNum, int tAmt ) {
     int tNo;
     int arrTime;
     int bNo;
-    for(int i = 0; i < tAmt; i++) {
-        newThread = createEmptyThread();  // Create local pointer and add it to thread list
+    for(int i = 0; i < tAmt; i++) { // Iterate through all threads to be added
+        newThread = createEmptyThread();  // Add new thread to list
         tList[i] = newThread;
         
         if(!newThread || scanf(" %d %d %d", &tNo, &arrTime, &bNo) != 3  || !validateLineEnding()) { // NULL Checks thread and attempts to ingest more info from stdin
-        //if(!newThread || scanf(" %d %d %d ", newThread->TNo, newThread->arrTime, &bNo) != 3 ) {
             fprintf(stderr, "Error ingesting thread %d of process %d.\n", i+1, pNum);
             freeThreads(tList, tAmt);
             return NULL;
         }
 
-        newThread->TNo = tNo;
+        newThread->TNo = tNo; // Ingest bursts from STDIN to this thread
         newThread->arrTime = arrTime;
         newThread->burstNo = bNo;
         newThread->PNo = pNum;
@@ -274,47 +272,40 @@ cpuBurst** createBurstList(int bAmt, int tNum) {
     cpuBurst** bList = (cpuBurst**)calloc(bAmt, sizeof(cpuBurst*));
     if(!bList) { return NULL; } // NULL Checks for failed malloc
 
-
-
     cpuBurst* newBurst;
     int burstNo;
     int cpuTime;
     int ioTime;
-    for(int i = 0; i < bAmt - 1; i++) {
-        newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst)); // Create local pointer and add it to burst list
+    for(int i = 0; i < bAmt ; i++) { // Iterate through n bursts to be added
+        newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst)); // Add new burst to list
         bList[i] = newBurst;
 
-        if(!newBurst || scanf(" %d %d %d", &burstNo, &cpuTime, &ioTime) != 3 || !validateLineEnding()) { // NULL Checks burst and attempts to ingest more info from stdin
-            fprintf(stderr, "Error ingesting burst %d of thread %d.\n", i+1, tNum);
-            freeBursts(bList, bAmt);
-            return NULL;
-        }        
+        if(i == bAmt - 1) { // nth burst, no IO
+            if(!newBurst || scanf(" %d %d", &burstNo, &cpuTime) != 2 || !validateLineEnding()) { // NULL Checks burst and attempts to ingest more info from stdin
+                fprintf(stderr, "Error ingesting burst %d of thread %d.\n", bAmt, tNum);
+                freeBursts(bList, bAmt); // Frees burst list
+                return NULL;
+            }   
+            newBurst->ioTime = 0;
+        }
+        else { // n - 1st burst, has IO
+            if(!newBurst || scanf(" %d %d %d", &burstNo, &cpuTime, &ioTime) != 3 || !validateLineEnding()) { // NULL Checks burst and attempts to ingest more info from stdin
+                fprintf(stderr, "Error ingesting burst %d of thread %d.\n", i+1, tNum);
+                freeBursts(bList, bAmt);
+                return NULL;
+            }      
+            newBurst->ioTime = ioTime;
+        }  
         newBurst->burstNo = burstNo;
         newBurst->cpuTime = cpuTime;
-        newBurst->ioTime = ioTime;
         newBurst->currCpuTime = cpuTime;
         newBurst->currIoTime = ioTime;
-
-        
     }
-
-    // Final burst, no IO
-    newBurst = (cpuBurst*)malloc(1* sizeof(cpuBurst));
-    bList[bAmt - 1] = newBurst;
-    if(!newBurst || scanf(" %d %d", &burstNo, &cpuTime) != 2 || !validateLineEnding()) { // NULL Checks burst and attempts to ingest more info from stdin
-        fprintf(stderr, "Error ingesting burst %d of thread %d.\n", bAmt, tNum);
-        freeBursts(bList, bAmt); // Frees burst list
-        return NULL;
-    }        
-    newBurst->burstNo = burstNo;
-    newBurst->cpuTime = cpuTime;
-    newBurst->ioTime = 0;
-    newBurst->currCpuTime = cpuTime;
-    newBurst->currIoTime = ioTime;
 
     return bList;
 }
 
+// Checks DES Min heap to see if any new processes have arrived
 void updateReadyQueue(heap* h, int timeElapsed) {
     thread* t;
     if(h != NULL) { // Null Check for heap
@@ -345,6 +336,8 @@ thread* createEmptyThread() {
     return newThread;
 }
 
+// Prints out a list of processes and their thread info.
+// Used when printing stats
 void printProcesses(process** processes, int processAmt) {
     if (processes != NULL) {
         for(int i = 0; i < processAmt; i++) {
@@ -357,6 +350,8 @@ void printProcesses(process** processes, int processAmt) {
     }
 }
 
+// Prints out a list of threads and their info
+// Used when printing stats
 void printThreads(thread** threads, int threadAmt) {
     thread* currThread;
     if(threads != NULL) {
@@ -375,6 +370,8 @@ void printThreads(thread** threads, int threadAmt) {
     }
 }
 
+// Calculate the total amount of IO time a thread needs
+// Used when printing stats
 int getTotalIOTime(thread* t) {
     int sum = 0;
     if ( t != NULL ) {
@@ -387,6 +384,8 @@ int getTotalIOTime(thread* t) {
         return sum;
 }
 
+// Calculate the total amount of cpu time a thread needs
+// Used when printing stats
 int getTotalServiceTime(thread* t) {
     int sum = 0;
     if ( t != NULL ) {
@@ -399,6 +398,8 @@ int getTotalServiceTime(thread* t) {
         return sum;
 }
 
+// Calculate a threads turnaround time
+// Used when printing stats
 int getTurnaroundTime(thread* t) {
     if ( t != NULL ) {
         return t->finTime - t->arrTime;
@@ -406,6 +407,8 @@ int getTurnaroundTime(thread* t) {
     return -1;
 }
 
+// Calculate the average turnaround time for all processes (NOT THREADS)
+// Used when printing stats
 float getAverageTurnaroundTime(process** processes, int processAmt) {
     float avgTime = 0;
     int processStartTime;
@@ -477,6 +480,8 @@ bool validateLineEnding() {
 }
 
 /* HEAP FUNCTIONS */
+
+// Checks if the DES Min Heap is empty
 bool isEmpty(heap* h) {
     if(h == NULL) {
         return true;
@@ -484,7 +489,7 @@ bool isEmpty(heap* h) {
     return h->curr_size == 0;
 }
 
-//TODO TEMP
+// Ingests a list of processes into a new DES Min Heap
 heap* initializeHeap(process** pList, int pNum) {
     // Create a new heap
     heap* h;
@@ -501,6 +506,7 @@ heap* initializeHeap(process** pList, int pNum) {
     return h;
 }
 
+// Inserts a node with key, data, curr burst, and event, into the heap
 void insertItem(heap* h, int key, void* data, int currBurst, event e) {
     // Create new node
     node* newNode = (node*)malloc(sizeof(node));
@@ -523,6 +529,7 @@ void insertItem(heap* h, int key, void* data, int currBurst, event e) {
     }
 }
 
+// Removes the minimum node from the heap
 // Returned value must be freed by the caller
 node* removeMin(heap* h) {
     node* topNode;
@@ -541,6 +548,7 @@ node* removeMin(heap* h) {
     
 }
 
+// Rebalances heap after inserting
 void upheap(heap* h, int i) {
     thread* t1;
     thread* t2;
@@ -556,17 +564,10 @@ void upheap(heap* h, int i) {
             swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
             upheap(h, parentIndex);
         }
-        /*t1 = (thread*) (h->harr)[parentIndex]->data;
-        t2 = (thread*) (h->harr)[i]->data;
-
-        if( t1->PNo > t2->PNo ) { // Process number of left node is greater than right node
-            swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
-            upheap(h, parentIndex);
-        }
-        */
     }
 }
 
+// Rebalances heap after removing
 void downheap(heap* h, int i) {
     node* n1;
     node* n2;
@@ -608,6 +609,7 @@ void downheap(heap* h, int i) {
     }
 }
 
+// Swap two nodes
 void swapNodes(node** n1, node** n2) {
     node* temp;
     temp = *n1;
@@ -615,6 +617,8 @@ void swapNodes(node** n1, node** n2) {
     *n2 = temp;
 }
 
+// Prints the current state of the heap
+// Used in debugging
 void printHeap(heap* h) {
     thread* t;
     if(h != NULL) {
@@ -628,6 +632,8 @@ void printHeap(heap* h) {
     }
 }
 
+// Frees a heap and its nodes
+// Does not free the node's contents
 void freeHeap(heap* h) {
     if(h != NULL) {
         for(int i = 0; i < h->curr_size; i++) {
@@ -639,6 +645,7 @@ void freeHeap(heap* h) {
     }
 }
 
+// Peaks at the heap and returns the minimum key
 int minKey(heap* h) {
     if(h != NULL && h->curr_size != 0) {
         return ( (h->harr)[0]->key);
@@ -646,6 +653,7 @@ int minKey(heap* h) {
     return -1;
 }
 
+// Peaks at the heap and returns the minimum key's node
 node* minElement(heap* h) {
     if(h != NULL && h->curr_size != 0) {
         return (h->harr)[0];
@@ -665,6 +673,8 @@ int getRightIndex(int index) {
     return 2*index + 2;
 }
 
+/* Other Functions */
+
 int min( int n1, int n2 ) {
     return (n1 <= n2) ? n1 : n2;
 }
@@ -673,6 +683,7 @@ int max( int n1, int n2 ) {
     return (n1 >= n2) ? n1 : n2;
 }
 
+// Switches a threads state, and prints info if verbose is turned on
 void stateSwitch(thread* t, state s, int nextAvailTime) {
     if(t != NULL) {
         state prevState = t->s;
@@ -682,6 +693,7 @@ void stateSwitch(thread* t, state s, int nextAvailTime) {
     }
 }
 
+// Increments all keys within a heap if it is not part of the ready queue
 void incrementAllKeys(heap* h, int amt) {
     if(h != NULL) {
         for(int i = 0; i < h->curr_size; i++) {

@@ -55,8 +55,8 @@ thread** createThreadList( int pNum, int tAmt );
 cpuBurst** createBurstList(int burstAmt, int tNum);
 bool validateLineEnding();
 void updateReadyQueue(heap* h, int timeElapsed);
-int consumeTime(heap* h, node* n, int amt, bool* emptyFlag);
-int peakTime(heap* h, node* n, int amt);
+int consumeTime(node* n, bool* emptyFlag);
+int peakTime(node* n);
 
 /* Process/Thread Helper Functions */
 int getTotalIOTime(thread* t);
