@@ -4,7 +4,6 @@ bool detailed = false;
 bool verbose = false;
 int RRTime = 0;
 char* enumString[5] = {"new", "ready", "running", "blocked", "terminated"};
-char* eventString[5] = {"T_BLOCKED", "T_UNBLOCKED", "T_END", "T_START", "ARRIVAL"};
 int threadSwitch;
 int processSwitch;
 
@@ -54,6 +53,7 @@ int main(int argc, char* argv[]) {
     thread* t;
     int cpuTimeToAdd;
     int prevPNo = -1;
+    int prevTNo = -1;
     int nextAvailTime = 0;
     int timeInCpu = 0;
     bool empty;
@@ -61,19 +61,27 @@ int main(int argc, char* argv[]) {
         n = removeMin(h);
         t = (thread*)(n->data);
 
+        if(nextAvailTime < n->key) { // Check for "nothing events" where time has passed with the CPU idle
+            nextAvailTime = n->key; // Update next available time to be now
+            // CPU was idle, there was no previous thread running
+            prevPNo = -1;
+            prevTNo = -1;
+        }
+
         switch(n->e) {
+            case T_CONTINUE: // Move Thread to ready queue if its done its RR burst (T_CONTINUE), done its IO burst (T_UNBLOCKED), just arrived (ARRIVAL)
             case T_UNBLOCKED:
-            case ARRIVAL:
+            case T_ARRIVAL:
                 stateSwitch(t, READY, n->key);
                 insertItem(h, nextAvailTime, t, n->currBurst, T_START); // Add the start time back into the event queue
                 nextAvailTime += peakTime(h, n, RRTime);
                 break;
             case T_START:
-                if( prevPNo != -1) {// Apply delay for context switch
+                // Apply delay for context switch
+                if( prevPNo != -1 && (prevPNo != t->PNo || prevTNo != t->TNo)) { // Disregard delay if CPU was idle, or if this is the same thread as last event
                     if( prevPNo == t->PNo ) {
                         incrementAllKeys(h, threadSwitch);
                         n->key += threadSwitch; // Update start time of this event
-                        prevPNo = t->PNo;
                         nextAvailTime += threadSwitch;
                     }
                     else {
@@ -83,6 +91,7 @@ int main(int argc, char* argv[]) {
                     } 
                 }
                 prevPNo = t->PNo;
+                prevTNo = t->TNo;
 
                 if(t->s != RUNNING)
                     stateSwitch(t, RUNNING, n->key);
@@ -90,7 +99,6 @@ int main(int argc, char* argv[]) {
                 cpuTimeToAdd = consumeTime(h, n, RRTime, &empty);
 
                 // add time to process thread
-                //nextAvailTime += cpuTimeToAdd;
                 CPUUtilizationTime += cpuTimeToAdd;
                 if(RRTime == 0) { //FCFS
                     if(n->currBurst == t->burstNo - 1) { // Final burst
@@ -100,15 +108,15 @@ int main(int argc, char* argv[]) {
                         insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
                     }
                 }
-                else {
+                else { //RR 
                     if(empty) {
-                        if(n->currBurst == t->burstNo - 1)// Final burst
+                        if(n->currBurst == t->burstNo - 1)// Final burst, set event to terminate thread after this IO burst
                             insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the the termination of this thread to the queue
-                        else
+                        else // More to compute, set this thread to blocked and set an event to put back into ready queue once IO is done
                             insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's switch to IO into the queue
                     }
-                    else {
-                        insertItem(h, nextAvailTime, t, n->currBurst, T_START); // Add this thread's switch to IO into the queue
+                    else { // Create an event at the end of this RR burst to block the thread and get it back into the ready queue
+                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_CONTINUE); // Add this thread's switch to IO into the queue
                     }
                 }
                 break;
@@ -400,16 +408,23 @@ int getTurnaroundTime(thread* t) {
 
 float getAverageTurnaroundTime(process** processes, int processAmt) {
     float avgTime = 0;
-    float threadAvgTime;
+    int processStartTime;
+    int processEndTime;
+    thread** tList;
     if(processes != NULL) {
         for(int i = 0; i < processAmt; i++) { // Iterate through each process
-            threadAvgTime = 0;
+            processStartTime = 0;
+            processEndTime = 0;
+            tList = processes[i]->threads;
             for(int j = 0; j < processes[i]->threadAmt; j++) { // Iterate through each thread
-                threadAvgTime += getTurnaroundTime(processes[i]->threads[i]);
+                processStartTime = min(processStartTime, tList[j]->arrTime); // Find the minimum start time for a thread in this process
+                processEndTime = max(processEndTime, tList[j]->finTime); // Find the maximum end time for a thread in this process
+
             }
-            threadAvgTime /= processes[i]->threadAmt;
-            avgTime += threadAvgTime;
+            avgTime += processEndTime - processStartTime; // Add the turnaround time for this process
         }
+
+        avgTime /= processAmt; // Divide by amt of processes
     }
     return avgTime;
 }
@@ -479,7 +494,7 @@ heap* initializeHeap(process** pList, int pNum) {
     // Ingest data from array into heap
     for(int i = 0; i < pNum; i++) {
         for(int j = 0; j < pList[i]->threadAmt; j++) {
-            insertItem(h, pList[i]->threads[j]->arrTime, pList[i]->threads[j], 0, ARRIVAL);
+            insertItem(h, pList[i]->threads[j]->arrTime, pList[i]->threads[j], 0, T_ARRIVAL);
         }
     }
 
@@ -654,6 +669,10 @@ int min( int n1, int n2 ) {
     return (n1 <= n2) ? n1 : n2;
 }
 
+int max( int n1, int n2 ) {
+    return (n1 >= n2) ? n1 : n2;
+}
+
 void stateSwitch(thread* t, state s, int nextAvailTime) {
     if(t != NULL) {
         state prevState = t->s;
@@ -666,7 +685,8 @@ void stateSwitch(thread* t, state s, int nextAvailTime) {
 void incrementAllKeys(heap* h, int amt) {
     if(h != NULL) {
         for(int i = 0; i < h->curr_size; i++) {
-            if((h->harr)[i]->e != ARRIVAL && (h->harr)[i]->e != T_UNBLOCKED) // Increment if not part of the ready queue
+            // Increment if not part of the ready queue
+            if((h->harr)[i]->e != T_ARRIVAL && (h->harr)[i]->e != T_UNBLOCKED && (h->harr)[i]->e != T_CONTINUE) 
                 (h->harr)[i]->key += amt;
         }
     }

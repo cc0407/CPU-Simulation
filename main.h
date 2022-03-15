@@ -11,7 +11,7 @@ typedef enum {
 } state;
 
 typedef enum {
-    T_BLOCKED, T_UNBLOCKED, T_END, T_START, ARRIVAL
+    T_BLOCKED, T_UNBLOCKED, T_ARRIVAL, T_CONTINUE, T_END, T_START, 
 } event;
 
 typedef struct {
@@ -93,6 +93,7 @@ void freeHeap(heap* h);
 
 /* Other Functions */
 int min( int n1, int n2 );
+int max( int n1, int n2 );
 void stateSwitch(thread* t, state s, int nextAvailTime);
 
 #endif /* SIMCPU */
