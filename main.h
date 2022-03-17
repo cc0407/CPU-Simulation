@@ -71,7 +71,6 @@ node* removeMin(heap* h); // Removes and returns top node
 int getParentIndex(int index);
 int getLeftIndex(int index);
 int getRightIndex(int index);
-//void bubble(heap* h); // Moves all nodes one to the right, makes space for new node
 void upheap(heap* h, int index); // Restores heap-order after insertion MUST BE CALLED IN INSERT
 void downheap(heap* h, int i); // Restores heap-order after removal MUST BE CALLED IN REMOVE
 
@@ -88,7 +87,6 @@ void freeHeap(heap* h);
 heap* initializeReadyQueue();
 void pushReadyQueue(heap* rq, void* data, int currBurst);
 node* popReadyQueue(heap* rq);
-
 
 /* Other Functions */
 int min( int n1, int n2 );
