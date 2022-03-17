@@ -4,7 +4,6 @@ bool detailed = false; // flag for -d input param
 bool verbose = false; // flag for -v input param
 int RRTime = 0; // flag for -r input param
 char* enumString[5] = {"new", "ready", "running", "blocked", "terminated"}; // For printing thread info in verbose mode
-char* eventString[6] = {"T_BLOCKED", "T_UNBLOCKED", "T_ARRIVAL", "T_CONTINUE", "T_END", "T_START"}; // For debugging heap
 
 int main(int argc, char* argv[]) {
     /* Initialize DES Min heap */
@@ -50,88 +49,64 @@ int main(int argc, char* argv[]) {
     node* n;
     thread* t;
     int CPUUtilizationTime = 0;
-    int cpuTimeToAdd;
+    int timeToAdd;
     int prevPNo = -1;
     int prevTNo = -1;
-    int nextAvailTime = 0;
+    int currentTime = 0;
     int timeInCpu = 0;
     bool empty;
-    int delayAmt;
-    while( !isEmpty(h) ) {
-        n = removeMin(h);
-        t = (thread*)(n->data);
+    int delayAmt = 0;
+    heap* rq = initializeReadyQueue();
+    while(!isEmpty(rq) || !isEmpty(h)) { // While there are events in the ready queue or heap
+        if(!isEmpty(rq)) { // If ready queue has processes waiting
+            n = popReadyQueue(rq); // get FI process
+            t = (thread*)(n->data);
+            
+            // Update context switch based on last process' info
+            if( prevPNo != -1 && (prevPNo != t->PNo || prevTNo != t->TNo)) { 
+                if( prevPNo == t->PNo ) // Current thread is from the same process
+                    delayAmt = threadSwitch;
+                else // Current thread is from a different process
+                    delayAmt = processSwitch;
+            }
+            prevPNo = t->PNo;
+            prevTNo = t->TNo;
+            currentTime += delayAmt; // Add time for prev context switch
 
-        if(nextAvailTime < n->key) { // Check for "nothing events" where time has passed with the CPU idle
-            nextAvailTime = n->key; // Update next available time to be now
-            prevPNo = -1; // CPU was idle, no previous thread running
-            prevTNo = -1;
+            // Set state of current thread to running
+            if(t->s != RUNNING)
+                stateSwitch(t, RUNNING, currentTime);
+
+            // Add time to process thread
+            timeInCpu = consumeTime(n, &empty);
+            CPUUtilizationTime += timeInCpu;
+            currentTime += timeInCpu;
+
+            // push any arrivals that happened during this burst into the ready queue
+            while(minKey(h) <= currentTime && !isEmpty(h)) {
+                parseNextEvent(h, rq);
+            }
+
+            if(n->currBurst == t->burstNo - 1 && empty) { // Final burst
+                    stateSwitch(t, TERMINATED, currentTime);
+                    t->finTime = currentTime;
+            }
+            else if(empty) { // Not final burst but done its cpu time for this burst
+                stateSwitch(t, BLOCKED, currentTime);
+                timeToAdd = consumeTime(n, &empty); // Get time for this IO Burst
+                insertItem(h, currentTime + timeToAdd, t, n->currBurst); // Add this thread's "switch to IO" into the event queue
+            }
+            else if(!empty) { // RR and its not done its current burst
+                stateSwitch(t, READY, currentTime);
+                pushReadyQueue(rq, t, n->currBurst);
+            }
         }
-
-        switch(n->e) {
-            // Move thread to ready queue if its done its RR burst (T_CONTINUE), done its IO burst (T_UNBLOCKED), just arrived (ARRIVAL)
-            case T_CONTINUE: 
-            case T_UNBLOCKED:
-            case T_ARRIVAL:
-                stateSwitch(t, READY, n->key);
-                insertItem(h, nextAvailTime, t, n->currBurst, T_START); // Add the start time back into the event queue
-                nextAvailTime += peakTime(n); // Push the end of the ready queue back to account for this process
-                break;
-            // Move thread off of ready queue and run it
-            case T_START:
-                // Apply delay to events for context switch. Disregard delay if CPU was idle, or if this is the same thread as last event
-                if( prevPNo != -1 && (prevPNo != t->PNo || prevTNo != t->TNo)) {
-                    if( prevPNo == t->PNo ) // Current thread is from the same process
-                        delayAmt = threadSwitch;
-                    else // Current thread is from a different process
-                        delayAmt = processSwitch;
-                    // Update all events to account for this delay
-                    incrementAllKeys(h, delayAmt);
-                    n->key += delayAmt;
-                    nextAvailTime += delayAmt;
-                }
-                prevPNo = t->PNo;
-                prevTNo = t->TNo;
-
-                // Set state of current thread to running
-                if(t->s != RUNNING)
-                    stateSwitch(t, RUNNING, n->key);
-
-                // Add time to process thread
-                cpuTimeToAdd = consumeTime(n, &empty);
-                CPUUtilizationTime += cpuTimeToAdd;
-
-                if(RRTime == 0) { //FCFS
-                    if(n->currBurst == t->burstNo - 1) // Final burst
-                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the termination of this thread to the event queue
-                    else if(empty) // Not final burst but done its cpu time for this burst
-                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's "switch to IO" into the event queue
-                }
-                else { //RR 
-                    if(empty) { // CPU time completed for this burst
-                        if(n->currBurst == t->burstNo - 1)// Final burst
-                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_END); // Add the termination of this thread to the event queue
-                        else // Not final burst but done its cpu time for this burst
-                            insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_BLOCKED); // Add this thread's "switch to IO" into the event queue
-                    }
-                    else // CPU time not completed for this burst
-                        insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_CONTINUE); // Move this thread back into ready queue after cpu is done
-                }
-                break;
-            // Current thread is finishing its final burst, terminate it
-            case T_END:
-                stateSwitch(t, TERMINATED, n->key);
-                t->finTime = n->key;
-                break;
-            // Current thread is finishing cpu time for this burst, move to IO queue and block this thread
-            case T_BLOCKED:
-                stateSwitch(t, BLOCKED, n->key);
-                cpuTimeToAdd = consumeTime(n, &empty); // Variable represents IO burst time in this case, not CPU burst time
-                if(empty) // Move thread onto its next burst
-                    n->currBurst++;
-                insertItem(h, n->key + cpuTimeToAdd, t, n->currBurst, T_UNBLOCKED); // Add next burst into the queue
-                break;
-            default:
-                break;
+        else { // Ready queue empty, grab next event in sim
+            prevPNo = -1; // CPU is idle, no previous process
+            prevTNo = -1;
+            delayAmt = 0;
+            currentTime = minKey(h); // update current time to this event
+            parseNextEvent(h, rq);
         }
     }
 
@@ -141,34 +116,20 @@ int main(int argc, char* argv[]) {
     else
         printf("Round Robin Scheduling (quantum = %d time units)\n", RRTime);
 
-    printf("Total Time required is %d units\n", nextAvailTime);
+    printf("Total Time required is %d units\n", currentTime);
     printf("Average Turnaround Time is %.1f time units\n", getAverageTurnaroundTime(*processes, processAmt));
-    if(nextAvailTime != 0)
-        printf("CPU Utilization is %0.1f%%\n", ((float)CPUUtilizationTime / (float)nextAvailTime) * 100);
+    if(currentTime != 0)
+        printf("CPU Utilization is %0.1f%%\n", ((float)CPUUtilizationTime / (float)currentTime) * 100);
     else
         printf("CPU Utilization is 0%%\n");
 
     if( detailed ) {
         printProcesses(*processes, processAmt);
-        //printHeap(h); //TODO DEBUGGING
     }
     freeProcesses(processes, processAmt);
     freeHeap(h);
+    freeHeap(rq);
     return 0;
-}
-
-// Returns the current amount of time that this burst will execute for
-int peakTime(node* n) {
-    thread* t = (thread*)n->data;
-    cpuBurst** b = t->bursts;
-    int bNo = n->currBurst;
-
-    int num = b[bNo]->currCpuTime; // Pull the CPU time from the current burst
-    if(RRTime != 0){ //RR with time quantum of [amt], take min of time quantum or time remaining in burst
-        num = min(num, RRTime); 
-    }
-
-    return num;
 }
 
 // Returns the current amount of time that this burst will execute for and consumes it in the thread
@@ -194,6 +155,7 @@ int consumeTime(node* n, bool* emptyFlag) {
         num = b[bNo]->currIoTime;
         b[bNo]->currIoTime = 0;
         *emptyFlag = true;
+        n->currBurst ++;
     }
 
     return num;
@@ -228,7 +190,7 @@ heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, 
     }
 
     /* Copy pointers from process array to heap */
-    heap* h = initializeHeap(*p, pNum);
+    heap* h = heapFromProcesses(*p, pNum);
 
     return h;
 }
@@ -303,22 +265,6 @@ cpuBurst** createBurstList(int bAmt, int tNum) {
     }
 
     return bList;
-}
-
-// Checks DES Min heap to see if any new processes have arrived
-void updateReadyQueue(heap* h, int timeElapsed) {
-    thread* t;
-    if(h != NULL) { // Null Check for heap
-        for(int i = 0; i < h->curr_size; i++) {
-            t = (thread*)(h->harr)[i]->data;
-            if(t->arrTime <= timeElapsed && t->s == NEW) { // Process should be added to the ready queue
-                if(verbose) {
-                    printf("At time %d: Thread %d of Process %d moves from new to ready.\n", timeElapsed, t->TNo, t->PNo);
-                }
-                t->s = READY;
-            }
-        }
-    }
 }
 
 // Initializes an empty thread and returns it
@@ -481,7 +427,7 @@ bool validateLineEnding() {
 
 /* HEAP FUNCTIONS */
 
-// Checks if the DES Min Heap is empty
+// Checks if the heap is empty
 bool isEmpty(heap* h) {
     if(h == NULL) {
         return true;
@@ -490,7 +436,7 @@ bool isEmpty(heap* h) {
 }
 
 // Ingests a list of processes into a new DES Min Heap
-heap* initializeHeap(process** pList, int pNum) {
+heap* heapFromProcesses(process** pList, int pNum) {
     // Create a new heap
     heap* h;
     h = (heap*)malloc(sizeof(heap));
@@ -499,7 +445,7 @@ heap* initializeHeap(process** pList, int pNum) {
     // Ingest data from array into heap
     for(int i = 0; i < pNum; i++) {
         for(int j = 0; j < pList[i]->threadAmt; j++) {
-            insertItem(h, pList[i]->threads[j]->arrTime, pList[i]->threads[j], 0, T_ARRIVAL);
+            insertItem(h, pList[i]->threads[j]->arrTime, pList[i]->threads[j], 0);
         }
     }
 
@@ -507,13 +453,12 @@ heap* initializeHeap(process** pList, int pNum) {
 }
 
 // Inserts a node with key, data, curr burst, and event, into the heap
-void insertItem(heap* h, int key, void* data, int currBurst, event e) {
+void insertItem(heap* h, int key, void* data, int currBurst) {
     // Create new node
     node* newNode = (node*)malloc(sizeof(node));
     newNode->currBurst = currBurst;
     newNode->key = key;
     newNode->data = data;
-    newNode->e = e;
 
     // Add node to heap
     h->curr_size++;
@@ -559,12 +504,6 @@ void upheap(heap* h, int i) {
         swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
         upheap(h, parentIndex);
     }
-    else if( (h->harr)[parentIndex]->key == (h->harr)[i]->key ) { // left node is equal to right node TODO NOT SURE IF THIS IS RIGHT
-        if((h->harr)[parentIndex]->e > (h->harr)[i]->e) {
-            swapNodes( &((h->harr)[parentIndex]), &((h->harr)[i]) );
-            upheap(h, parentIndex);
-        }
-    }
 }
 
 // Rebalances heap after removing
@@ -591,16 +530,10 @@ void downheap(heap* h, int i) {
         if(h->harr[leftIndex]->key < h->harr[min]->key) { // Compare left with min
             min = leftIndex;
         }
-        else if(h->harr[leftIndex]->key == h->harr[min]->key && h->harr[leftIndex]->e < h->harr[min]->e) { // Node keys are the same, compare priority of event enum
-            min = leftIndex;
-        }
     }
     if(rightIndex != -1) {
         if(h->harr[rightIndex]->key < h->harr[min]->key) { // Compare right with min
         min = rightIndex;
-        }
-        else if( h->harr[rightIndex]->key == h->harr[min]->key && h->harr[rightIndex]->e < h->harr[min]->e ) { // Node keys are the same, compare priority of event enum
-            min = rightIndex;
         }
     }
     if(min != i) { // Swap the minimum with i
@@ -626,7 +559,7 @@ void printHeap(heap* h) {
         for(int i = 0; i < h->curr_size; i++) {
             t = (thread*)(h->harr)[i]->data;
             printf("Key: %d, Thread #: %d, Process #: %d, currentBurst: %d, event: %s\n", 
-            (h->harr)[i]->key, t->TNo, t->PNo, (h->harr)[i]->currBurst, eventString[(h->harr)[i]->e]);
+            (h->harr)[i]->key, t->TNo, t->PNo, (h->harr)[i]->currBurst);
         }
         printf("---\n");
     }
@@ -697,9 +630,41 @@ void stateSwitch(thread* t, state s, int nextAvailTime) {
 void incrementAllKeys(heap* h, int amt) {
     if(h != NULL) {
         for(int i = 0; i < h->curr_size; i++) {
-            // Increment if not part of the ready queue
-            if((h->harr)[i]->e != T_ARRIVAL && (h->harr)[i]->e != T_UNBLOCKED && (h->harr)[i]->e != T_CONTINUE) 
-                (h->harr)[i]->key += amt;
+            (h->harr)[i]->key += amt;
         }
+    }
+}
+
+// Allocates space for a new heap representing the ready queue
+// Must be freed by caller
+heap* initializeReadyQueue() {
+    heap* h;
+    h = (heap*)malloc(sizeof(heap));
+    h->curr_size = 0;
+
+    return h;
+}
+
+// Add new node to end of ready queue
+// data: a thread pointer
+// currBurst: the current burst of the thread (usually taken from another node)
+void pushReadyQueue(heap* rq, void* data, int currBurst) {
+    insertItem(rq, rq->curr_size, data, currBurst);
+}
+
+// Remove and return the 0th element of the ready queue
+node* popReadyQueue(heap* rq) {
+    node* retNode = removeMin(rq);
+    incrementAllKeys(rq, -1); // Shift left by one so min key is always 0
+    return retNode;
+}
+
+// Remove the next event from the heap and add it to the ready queue
+void parseNextEvent(heap* h, heap* rq) {
+    if(!isEmpty(h)) {
+        node* n = removeMin(h);
+        thread* t = (thread*)(n->data);
+        stateSwitch(t, READY, n->key); // Set this thread to ready
+        pushReadyQueue(rq, t, n->currBurst); // Add the start time back into the event queue
     }
 }

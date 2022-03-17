@@ -10,10 +10,6 @@ typedef enum {
     NEW, READY, RUNNING, BLOCKED, TERMINATED
 } state;
 
-typedef enum {
-    T_BLOCKED, T_UNBLOCKED, T_ARRIVAL, T_CONTINUE, T_END, T_START, 
-} event;
-
 typedef struct {
     int burstNo;
     int cpuTime;
@@ -41,7 +37,6 @@ typedef struct {
     int key;
     void* data;
     int currBurst; // IS AN INDEX, ADD +1 WHEN COMPARING TO BURSTNO IN A THREAD
-    event e;
 } node;
 
 typedef struct {
@@ -54,9 +49,8 @@ heap* initializePriorityQueue(process*** p, int* processAmt, int* threadSwitch, 
 thread** createThreadList( int pNum, int tAmt );
 cpuBurst** createBurstList(int burstAmt, int tNum);
 bool validateLineEnding();
-void updateReadyQueue(heap* h, int timeElapsed);
 int consumeTime(node* n, bool* emptyFlag);
-int peakTime(node* n);
+void parseNextEvent(heap* h, heap* rq);
 
 /* Process/Thread Helper Functions */
 int getTotalIOTime(thread* t);
@@ -71,8 +65,8 @@ void freeThreads( thread** threads, int threadAmt);
 void freeBursts(cpuBurst** bursts, int burstAmt);
 
 /* Heap Functions */
-heap* initializeHeap(process** pList, int pNum);
-void insertItem(heap* h, int key, void* data, int currBurst, event e);
+heap* heapFromProcesses(process** pList, int pNum);
+void insertItem(heap* h, int key, void* data, int currBurst);
 node* removeMin(heap* h); // Removes and returns top node
 int getParentIndex(int index);
 int getLeftIndex(int index);
@@ -83,13 +77,18 @@ void downheap(heap* h, int i); // Restores heap-order after removal MUST BE CALL
 
 int minKey(heap* h); // Gets the arrival time of the top node
 node* minElement(heap* h); // Gets a whole thread from the top node
-int heapSize(heap* h); // Returns the total size of a given heap
 bool isEmpty(heap* h);
 void swapNodes(node** n1, node** n2); // Swaps two nodes, double pointers so the values can be carried out of the function
 void incrementAllKeys(heap* h, int amt);
 
 void printHeap(heap* h);
 void freeHeap(heap* h);
+
+/* Ready Queue Functions */
+heap* initializeReadyQueue();
+void pushReadyQueue(heap* rq, void* data, int currBurst);
+node* popReadyQueue(heap* rq);
+
 
 /* Other Functions */
 int min( int n1, int n2 );
