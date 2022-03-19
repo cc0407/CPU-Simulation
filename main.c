@@ -1,3 +1,4 @@
+// Christian Catalano, Assignment 2, March 19th, 1120832
 #include "main.h"
 
 bool detailed = false; // flag for -d input param
@@ -90,6 +91,8 @@ int main(int argc, char* argv[]) {
             if(n->currBurst == t->burstNo - 1 && empty) { // Final burst
                     stateSwitch(t, TERMINATED, currentTime);
                     t->finTime = currentTime;
+                    if(verbose) // Print thread summary if verbose is turned on
+                        printThread(t);
             }
             else if(empty) { // Not final burst but done its cpu time for this burst
                 stateSwitch(t, BLOCKED, currentTime);
@@ -111,6 +114,7 @@ int main(int argc, char* argv[]) {
     }
 
     /* Print Statistics */
+    printf("------------------------------------------------------------\n");
     if(RRTime == 0)
         printf("FCFS Scheduling\n");
     else
@@ -126,6 +130,7 @@ int main(int argc, char* argv[]) {
     if( detailed ) {
         printProcesses(*processes, processAmt);
     }
+    printf("------------------------------------------------------------\n");
     freeProcesses(processes, processAmt);
     freeHeap(h);
     freeHeap(rq);
@@ -296,19 +301,23 @@ void printProcesses(process** processes, int processAmt) {
     }
 }
 
+void printThread(thread* t) {
+    if(t != NULL) {
+        printf("Thread %d of Process %d:\n", t->TNo, t->PNo);
+        printf("\tarrival time: %d\n", t->arrTime);
+        printf("\tservice time: %d units, I/O time: %d units, turnaround time: %d units, finish time: %d units\n", 
+        getTotalServiceTime(t), getTotalIOTime(t), getTurnaroundTime(t), t->finTime);
+    }
+}
+
 // Prints out a list of threads and their info
 // Used when printing stats
 void printThreads(thread** threads, int threadAmt) {
     thread* currThread;
     if(threads != NULL) {
         for(int i = 0; i < threadAmt; i++) {
-            if(threads[i] != NULL) {
-                currThread = threads[i];
-                printf("Thread %d of Process %d:\n", currThread->TNo, currThread->PNo);
-                printf("\tarrival time: %d\n", currThread->arrTime);
-                printf("\tservice time: %d units, I/O time: %d units, turnaround time: %d units, finish time: %d units\n", 
-                    getTotalServiceTime(currThread), getTotalIOTime(currThread), getTurnaroundTime(currThread), currThread->finTime);
-            }
+            if(threads[i] != NULL)
+                printThread(threads[i]);
         }
     }  
     else {
@@ -468,7 +477,6 @@ void insertItem(heap* h, int key, void* data, int currBurst) {
     }
     else { // Nodes present in heap
         h->harr = (node**)realloc(h->harr, h->curr_size * sizeof(node*)); // Make space for another node
-        //bubble(h);  // Move all nodes one to the right
         (h->harr)[h->curr_size-1] = newNode; // Set last node to new node
         upheap(h, h->curr_size-1); // Restore heap balance
     }

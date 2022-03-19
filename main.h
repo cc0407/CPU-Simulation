@@ -1,3 +1,4 @@
+// Christian Catalano, Assignment 2, March 19th, 1120832
 #ifndef SIMCPU
 #define SIMCPU
 
@@ -60,6 +61,7 @@ float getAverageTurnaroundTime(process** processes, int processAmt);
 thread* createEmptyThread();
 void printProcesses(process** processes, int processAmt);
 void printThreads(thread** threads, int threadAmt);
+void printThread(thread* t);
 void freeProcesses(process*** processes, int processAmt); // Frees a list of processes
 void freeThreads( thread** threads, int threadAmt);
 void freeBursts(cpuBurst** bursts, int burstAmt);
